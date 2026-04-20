@@ -1,0 +1,4 @@
+{
+    "cmake.sourceDirectory": "/home/exo/Embedded/STM32_Motor_Control",
+    "cmake.useCMakePresets": "always"
+}

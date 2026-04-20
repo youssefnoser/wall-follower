@@ -1,0 +1,36 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "arm-debug",
+            "displayName": "STM32F103C8 Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "toolchainFile": "${sourceDir}/arm-none-eabi-toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "TRUE"
+            }
+        },
+        {
+            "name": "arm-release",
+            "displayName": "STM32F103C8 Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "toolchainFile": "${sourceDir}/arm-none-eabi-toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "arm-debug",
+            "configurePreset": "arm-debug"
+        },
+        {
+            "name": "arm-release",
+            "configurePreset": "arm-release"
+        }
+    ]
+}
