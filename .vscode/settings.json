@@ -1,4 +1,6 @@
 {
-    "cmake.sourceDirectory": "/home/exo/Embedded/STM32_Motor_Control",
-    "cmake.useCMakePresets": "always"
+    "cmake.sourceDirectory": "/home/exo/Embedded",
+    "cmake.useCMakePresets": "always",
+    "cortex-debug.gdbPath": "gdb-multiarch",
+    "cortex-debug.armToolchainPath": "/usr/bin"
 }

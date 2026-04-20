@@ -35,7 +35,7 @@ int main(void)
     
     /* Initialize sensors and actuators */
     // L298N_Init(&motor_driver);
-    // HC_SR04_Init(&ultrasonic_sensor);
+    HC_SR04_Init(&ultrasonic_sensor);
     // IR_Sensor_Init(&ir_sensor_left);
     // IR_Sensor_Init(&ir_sensor_right);
     // MPU6050_Init(&imu);
@@ -45,48 +45,16 @@ int main(void)
     {
         /* Blink LED on PC13 */
         HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-        HAL_Delay(500); // 500ms delay
         
-        // /* Read sensors */
-        // HC_SR04_StartMeasurement(&ultrasonic_sensor);
-        // HAL_Delay(100);
+        /* Read sensors */
+        HC_SR04_StartMeasurement(&ultrasonic_sensor);
+        HAL_Delay(50); // Wait for the echo to bounce back
         
-        // uint8_t ir_left_state = IR_Sensor_GetState(&ir_sensor_left);
-        // uint8_t ir_right_state = IR_Sensor_GetState(&ir_sensor_right);
+        float distance = HC_SR04_GetDistance(&ultrasonic_sensor);
         
-        // MPU6050_ReadAll(&imu);
+        /* Debugging Notes: Place a breakpoint or add 'distance' to your GDB Watch list here! */
         
-        // float distance = HC_SR04_GetDistance(&ultrasonic_sensor);
-        
-        // /* Simple obstacle avoidance logic */
-        // if (distance < 20.0f)
-        // {
-        //     /* Obstacle detected - stop and backup */
-        //     L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, 50);
-        //     L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, 50);
-        // }
-        // else if (ir_left_state == IR_OBJECT_DETECTED || ir_right_state == IR_OBJECT_DETECTED)
-        // {
-        //     /* Line detected - turn away */
-        //     if (ir_left_state == IR_OBJECT_DETECTED)
-        //     {
-        //         L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 30);
-        //         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
-        //     }
-        //     else if (ir_right_state == IR_OBJECT_DETECTED)
-        //     {
-        //         L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
-        //         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 30);
-        //     }
-        // }
-        // else
-        // {
-        //     /* Move forward */
-        //     L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
-        //     L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
-        // }
-        
-        // HAL_Delay(50);
+        HAL_Delay(100);
     }
     
     return 0;
@@ -186,10 +154,36 @@ void GPIO_Init(void)
  */
 void TIM_Init(void)
 {
-    /* This would be configured via CubeMX */
-    /* Example TIM2 for motor PWM, TIM3 for ultrasonic input capture */
+    /* Configure TIM3 for HC-SR04 (1 MHz timer, 1us per tick) */
+    static TIM_HandleTypeDef htim3;
+    TIM_IC_InitTypeDef sConfigIC = {0};
+
+    __HAL_RCC_TIM3_CLK_ENABLE();
+
+    htim3.Instance = TIM3;
+    htim3.Init.Prescaler = 64 - 1; // Assuming 64MHz System Clock -> 1MHz timer clock
+    htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+    htim3.Init.Period = 0xFFFF;
+    htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    HAL_TIM_IC_Init(&htim3);
+
+    sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING; // STM32F1 can't do BOTHEDGE natively!
+    sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+    sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+    sConfigIC.ICFilter = 0;
+    HAL_TIM_IC_ConfigChannel(&htim3, &sConfigIC, TIM_CHANNEL_4); // PB1 is TIM3_CH4
     
-    motor_driver.motor_left.PWM_Max = 1000;
+    ultrasonic_sensor.htim = &htim3;
+    ultrasonic_sensor.tim_channel = TIM_CHANNEL_4;
+
+    /* Start the timer counter */
+    HAL_TIM_Base_Start(&htim3);
+
+    /* Enable TIM3 global interrupt for Input Capture */
+    HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
+    HAL_NVIC_EnableIRQ(TIM3_IRQn);
+
+    /* PWM limits for L298N (for later) */
     motor_driver.motor_right.PWM_Max = 1000;
 }
 
@@ -241,4 +235,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
     {
         /* Handle right IR detection */
     }
+}
+
+/**
+ * @brief TIM3 Interrupt Handler
+ */
+void TIM3_IRQHandler(void)
+{
+    HAL_TIM_IRQHandler(ultrasonic_sensor.htim);
 }

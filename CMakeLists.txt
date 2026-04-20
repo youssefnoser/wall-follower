@@ -16,7 +16,7 @@ set(STM32_MODEL  STM32F103C8)
 set(MCU_FLAGS "-mcpu=cortex-m3 -mthumb")
 
 set(CMAKE_C_FLAGS
-    "${MCU_FLAGS} -Wall -Wextra -Wno-unused-parameter -O2 -g3 -fdata-sections -ffunction-sections")
+    "${MCU_FLAGS} -Wall -Wextra -Wno-unused-parameter -Og -g3 -fdata-sections -ffunction-sections")
 set(CMAKE_ASM_FLAGS "${MCU_FLAGS} -x assembler-with-cpp")
 
 # ── Post-build tools ──────────────────────────────────────────────────────────
@@ -96,7 +96,8 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
     -Wl,--print-memory-usage
     -Wl,-Map=${PROJECT_NAME}.map
     --specs=nano.specs
-    --specs=nosys.specs
+    --specs=rdimon.specs
+    -u_printf_float
     -T${LINKER_SCRIPT}
 )
 
