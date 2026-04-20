@@ -34,58 +34,72 @@ int main(void)
     ADC_Init();
     
     /* Initialize sensors and actuators */
-    L298N_Init(&motor_driver);
-    HC_SR04_Init(&ultrasonic_sensor);
-    IR_Sensor_Init(&ir_sensor_left);
-    IR_Sensor_Init(&ir_sensor_right);
-    MPU6050_Init(&imu);
+    // L298N_Init(&motor_driver);
+    // HC_SR04_Init(&ultrasonic_sensor);
+    // IR_Sensor_Init(&ir_sensor_left);
+    // IR_Sensor_Init(&ir_sensor_right);
+    // MPU6050_Init(&imu);
     
     /* Main loop */
     while (1)
     {
-        /* Read sensors */
-        HC_SR04_StartMeasurement(&ultrasonic_sensor);
-        HAL_Delay(100);
+        /* Blink LED on PC13 */
+        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+        HAL_Delay(500); // 500ms delay
         
-        uint8_t ir_left_state = IR_Sensor_GetState(&ir_sensor_left);
-        uint8_t ir_right_state = IR_Sensor_GetState(&ir_sensor_right);
+        // /* Read sensors */
+        // HC_SR04_StartMeasurement(&ultrasonic_sensor);
+        // HAL_Delay(100);
         
-        MPU6050_ReadAll(&imu);
+        // uint8_t ir_left_state = IR_Sensor_GetState(&ir_sensor_left);
+        // uint8_t ir_right_state = IR_Sensor_GetState(&ir_sensor_right);
         
-        float distance = HC_SR04_GetDistance(&ultrasonic_sensor);
+        // MPU6050_ReadAll(&imu);
         
-        /* Simple obstacle avoidance logic */
-        if (distance < 20.0f)
-        {
-            /* Obstacle detected - stop and backup */
-            L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, 50);
-            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, 50);
-        }
-        else if (ir_left_state == IR_OBJECT_DETECTED || ir_right_state == IR_OBJECT_DETECTED)
-        {
-            /* Line detected - turn away */
-            if (ir_left_state == IR_OBJECT_DETECTED)
-            {
-                L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 30);
-                L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
-            }
-            else if (ir_right_state == IR_OBJECT_DETECTED)
-            {
-                L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
-                L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 30);
-            }
-        }
-        else
-        {
-            /* Move forward */
-            L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
-            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
-        }
+        // float distance = HC_SR04_GetDistance(&ultrasonic_sensor);
         
-        HAL_Delay(50);
+        // /* Simple obstacle avoidance logic */
+        // if (distance < 20.0f)
+        // {
+        //     /* Obstacle detected - stop and backup */
+        //     L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, 50);
+        //     L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, 50);
+        // }
+        // else if (ir_left_state == IR_OBJECT_DETECTED || ir_right_state == IR_OBJECT_DETECTED)
+        // {
+        //     /* Line detected - turn away */
+        //     if (ir_left_state == IR_OBJECT_DETECTED)
+        //     {
+        //         L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 30);
+        //         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
+        //     }
+        //     else if (ir_right_state == IR_OBJECT_DETECTED)
+        //     {
+        //         L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
+        //         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 30);
+        //     }
+        // }
+        // else
+        // {
+        //     /* Move forward */
+        //     L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 70);
+        //     L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 70);
+        // }
+        
+        // HAL_Delay(50);
     }
     
     return 0;
+}
+
+/**
+ * @brief  This function handles SysTick Handler.
+ * @param  None
+ * @retval None
+ */
+void SysTick_Handler(void)
+{
+    HAL_IncTick();
 }
 
 /**
@@ -156,6 +170,14 @@ void GPIO_Init(void)
     ir_sensor_right.GPIO_PORT = GPIOC;
     ir_sensor_right.GPIO_PIN = GPIO_PIN_1;
     ir_sensor_right.mode = IR_MODE_DIGITAL;
+
+    /* Configure PC13 for onboard LED */
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin = GPIO_PIN_13;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 }
 
 /**

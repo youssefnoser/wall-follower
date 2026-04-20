@@ -50,7 +50,10 @@ void L298N_SetSpeed(L298N_t *h_motor, uint8_t motor, uint8_t speed)
     
     uint32_t pwm_value = (speed * motor_ptr->PWM_Max) / 100;
     
-    __HAL_TIM_SET_COMPARE(motor_ptr->htim, motor_ptr->PWM_Channel, pwm_value);
+    if (motor_ptr->htim != NULL)
+    {
+        __HAL_TIM_SET_COMPARE(motor_ptr->htim, motor_ptr->PWM_Channel, pwm_value);
+    }
 }
 
 /**
