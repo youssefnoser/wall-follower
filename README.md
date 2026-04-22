@@ -36,24 +36,9 @@ STM32_Motor_Control/
 
 ### HC-SR04 Ultrasonic Sensor
 
-- **TRIG**: PB0 (Output)
-- **ECHO**: PB1 (Input Capture - TIM3_CH2)
-- **VCC**: +5V
-- **GND**: Ground
-
-### IR Sensors
-
-#### Left IR Sensor
-
-- **OUT**: PC0 (GPIO Input or ADC0)
-- **VCC**: +5V
-- **GND**: Ground
-
-#### Right IR Sensor
-
-- **OUT**: PC1 (GPIO Input or ADC1)
-- **VCC**: +5V
-- **GND**: Ground
+- Front PB8 PA6 (AF) CH1
+- Left PB9 PA7 (AF) CH2
+- Right PB10 PB0 (AF) CH3
 
 ### MPU6050 IMU
 
