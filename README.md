@@ -48,6 +48,11 @@ STM32_Motor_Control/
 - **GND**: Ground
 - **AD0**: GND (Default I2C address: 0x68)
 
+## ESP8266 WIFI
+
+- PA2 TX -> ESP RX
+- PA3 RX -> ESP TX
+
 ## Module Usage
 
 ### Motor Driver (L298N)

@@ -53,6 +53,8 @@ set(HAL_SOURCES
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_pwr.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_flash.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_flash_ex.c
+    drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_uart.c
+
     # CMSIS system init
     drivers/CMSIS/Device/ST/STM32F1xx/source/Templates/system_stm32f1xx.c
 )
@@ -84,6 +86,7 @@ set(SOURCES
     src/hc_sr04.c
     src/ir_sensor.c
     src/mpu6050.c
+    src/esp8266.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )
