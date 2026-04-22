@@ -25,7 +25,6 @@ void TIM_Init(void);
 void I2C_Init(void);
 void ADC_Init(void);
 
-/* ------------------------------------------------------------------ */
 int main(void) {
   HAL_Init();
   SystemClock_Config();
@@ -40,7 +39,8 @@ int main(void) {
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
 
-  /* ── ESP8266 ─────────────────────────────────────────────────── */
+  MPU6050_Init(&imu); // <-- add this
+
   ESP8266_Init();
   ESP8266_SendCmd("AT");
   if (ESP8266_CheckResponse("OK", 10000))
@@ -54,6 +54,7 @@ int main(void) {
   while (1) {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 
+    /* Ultrasonics */
     HC_SR04_StartMeasurement(&ultrasonic_front);
     HAL_Delay(50);
     HC_SR04_StartMeasurement(&ultrasonic_left);
@@ -67,6 +68,15 @@ int main(void) {
 
     printf("Front: %.2f cm  |  Left: %.2f cm  |  Right: %.2f cm\n", dist_front,
            dist_left, dist_right);
+
+    /* IMU */
+    MPU6050_ReadAll(&imu); // <-- add this
+
+    printf("Accel  X: %.2f  Y: %.2f  Z: %.2f g\n", imu.accel.x, imu.accel.y,
+           imu.accel.z);
+    printf("Gyro   X: %.2f  Y: %.2f  Z: %.2f dps\n", imu.gyro.x, imu.gyro.y,
+           imu.gyro.z);
+    printf("Temp: %.1f C\n", imu.temperature);
 
     HAL_Delay(100);
   }
@@ -191,7 +201,34 @@ void TIM_Init(void) {
 }
 
 /* ------------------------------------------------------------------ */
-void I2C_Init(void) { imu.i2c_addr = MPU6050_ADDR; }
+void I2C_Init(void) {
+  static I2C_HandleTypeDef hi2c1;
+
+  __HAL_RCC_I2C1_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /* PB6 = SCL, PB7 = SDA — I2C1 default pins on STM32F103 */
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD; // open-drain, required for I2C
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000; // 400 kHz fast mode
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+    while (1)
+      ;
+
+  imu.hi2c = &hi2c1;
+  imu.i2c_addr = MPU6050_ADDR;
+}
 void ADC_Init(void) {}
 
 /* ------------------------------------------------------------------ */

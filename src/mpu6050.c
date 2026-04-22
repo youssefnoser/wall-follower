@@ -148,5 +148,5 @@ void MPU6050_ReadAll(MPU6050_t *mpu6050)
 {
     MPU6050_ReadAccelerometer(mpu6050);
     MPU6050_ReadGyroscope(mpu6050);
-    MPU6050_ReadTemperature(mpu6050);
+    // MPU6050_ReadTemperature(mpu6050);
 }
