@@ -25,28 +25,26 @@ STM32_Motor_Control/
 
 ### L298N Motor Driver
 
-- **IN1 (Left Motor)**: PA0
-- **IN2 (Left Motor)**: PA1
-- **IN3 (Right Motor)**: PA2
-- **IN4 (Right Motor)**: PA3
-- **PWM (Left Motor)**: TIM2_CH1 (PA5)
-- **PWM (Right Motor)**: TIM2_CH2 (PA6)
-- **GND**: Connect to MCU GND
-- **+5V**: Connect to power supply
+- **IN1-IN4 (dir)**: PB12-PB15
+- **EN (PWM)**: PA0-PA1
 
 ### HC-SR04 Ultrasonic Sensor
 
-- Front PB8 PA6 (AF) CH1
-- Left PB9 PA7 (AF) CH2
-- Right PB10 PB0 (AF) CH3
+- **Front**: Trig: PB8, Echo: PA6 (TIM3_CH1)
+- **Left**: Trig: PA7, Echo: PB9 (TIM4_CH4)
+- **Right**: Trig: PB10, Echo: PB0 (TIM3_CH3)
 
 ### MPU6050 IMU
 
-- **SCL**: PB10 (I2C2_SCL)
-- **SDA**: PB11 (I2C2_SDA)
-- **VCC**: +3.3V
-- **GND**: Ground
-- **AD0**: GND (Default I2C address: 0x68)
+- **I2C**: PB6, PB7
+
+### ESP8266 UART
+
+- **UART**: PA9, PA10
+
+### Built-in LED
+
+- **LED**: PC13
 
 ## ESP8266 WIFI
 
