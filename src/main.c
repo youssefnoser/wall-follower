@@ -4,6 +4,7 @@
 #include "l298n.h"
 #include "mpu6050.h"
 #include "stm32f1xx_hal.h"
+#include "wall_follower_fsm.h"
 #include <stdio.h>
 
 /* Global Handlers */
@@ -13,9 +14,11 @@ HC_SR04_t ultrasonic_front;
 HC_SR04_t ultrasonic_left;
 HC_SR04_t ultrasonic_right;
 
-IR_Sensor_t ir_sensor_left;
-IR_Sensor_t ir_sensor_right;
+IR_Sensor_t ir_sensor_front;
 MPU6050_t imu;
+
+/* FSM context */
+WallFollower_t fsm;
 
 /* Forward Declarations */
 extern void initialise_monitor_handles(void);
@@ -39,22 +42,21 @@ int main(void) {
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
 
-  MPU6050_Init(&imu); // <-- add this
+  IR_Sensor_Init(&ir_sensor_front);
 
-  ESP8266_Init();
-  ESP8266_SendCmd("AT");
-  if (ESP8266_CheckResponse("OK", 10000))
-    printf("ESP8266 AT Command OK\n");
+  L298N_Init(&motor_driver);
 
-  if (ESP8266_ConnectWiFi("Youssef's A51", "lol123a@@"))
-    printf("Successfully connected to WiFi!\n");
-  else
-    printf("Failed to connect to WiFi.\n");
+  MPU6050_Init(&imu);
+
+  /* Initialise FSM – must be called after all hardware inits */
+  WallFollower_Init(&fsm);
+
+  printf("Wall Follower FSM ready.\n");
 
   while (1) {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 
-    /* Ultrasonics */
+    /* ---- Ultrasonics ------------------------------------------------- */
     HC_SR04_StartMeasurement(&ultrasonic_front);
     HAL_Delay(50);
     HC_SR04_StartMeasurement(&ultrasonic_left);
@@ -62,21 +64,31 @@ int main(void) {
     HC_SR04_StartMeasurement(&ultrasonic_right);
     HAL_Delay(50);
 
-    volatile float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
-    volatile float dist_left = HC_SR04_GetDistance(&ultrasonic_left);
-    volatile float dist_right = HC_SR04_GetDistance(&ultrasonic_right);
+    float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
+    float dist_left = HC_SR04_GetDistance(&ultrasonic_left);
+    float dist_right = HC_SR04_GetDistance(&ultrasonic_right);
 
-    printf("Front: %.2f cm  |  Left: %.2f cm  |  Right: %.2f cm\n", dist_front,
-           dist_left, dist_right);
+    /* ---- IR sensors -------------------------------------------------- */
+    /*
+     * Front IR is used to detect close obstacles as a failsafe for ultrasonics.
+     * IR_NO_OBJECT       → route clear, safe to move
+     * IR_OBJECT_DETECTED → obstacle very close, stop!
+     */
+    uint8_t ir_safe = (IR_Sensor_GetState(&ir_sensor_front) == IR_NO_OBJECT);
 
-    /* IMU */
-    MPU6050_ReadAll(&imu); // <-- add this
+    /* ---- IMU --------------------------------------------------------- */
+    MPU6050_ReadAll(&imu);
 
-    printf("Accel  X: %.2f  Y: %.2f  Z: %.2f g\n", imu.accel.x, imu.accel.y,
-           imu.accel.z);
-    printf("Gyro   X: %.2f  Y: %.2f  Z: %.2f dps\n", imu.gyro.x, imu.gyro.y,
-           imu.gyro.z);
-    printf("Temp: %.1f C\n", imu.temperature);
+    /* ---- FSM step ----------------------------------------------------- */
+    WallFollower_Update(&fsm, dist_front, dist_left, dist_right, ir_safe,
+                        imu.gyro.z); /* gyro Z in degrees/second */
+
+    /* ---- Debug print -------------------------------------------------- */
+    printf("[FSM] %-13s | F:%5.1f L:%5.1f R:%5.1f cm | IR:%d | Yaw:%7.1f deg | "
+           "Retries "
+           "L:%d R:%d\n",
+           FSM_StateName(fsm.state), dist_front, dist_left, dist_right, ir_safe,
+           fsm.yaw, fsm.retry_left, fsm.retry_right);
 
     HAL_Delay(100);
   }
@@ -119,36 +131,36 @@ void GPIO_Init(void) {
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
-  motor_driver.motor_left.IN1_PORT = GPIOA;
-  motor_driver.motor_left.IN1_PIN = GPIO_PIN_0;
-  motor_driver.motor_left.IN2_PORT = GPIOA;
-  motor_driver.motor_left.IN2_PIN = GPIO_PIN_1;
-  motor_driver.motor_right.IN1_PORT = GPIOA;
-  motor_driver.motor_right.IN1_PIN = GPIO_PIN_2;
-  motor_driver.motor_right.IN2_PORT = GPIOA;
-  motor_driver.motor_right.IN2_PIN = GPIO_PIN_3;
+  motor_driver.motor_left.IN1_PORT = GPIOB;
+  motor_driver.motor_left.IN1_PIN = GPIO_PIN_12;
+  motor_driver.motor_left.IN2_PORT = GPIOB;
+  motor_driver.motor_left.IN2_PIN = GPIO_PIN_13;
+  motor_driver.motor_right.IN1_PORT = GPIOB;
+  motor_driver.motor_right.IN1_PIN = GPIO_PIN_14;
+  motor_driver.motor_right.IN2_PORT = GPIOB;
+  motor_driver.motor_right.IN2_PIN = GPIO_PIN_15;
+
+  motor_driver.motor_left.PWM_Channel = TIM_CHANNEL_1;  /* PA0 */
+  motor_driver.motor_right.PWM_Channel = TIM_CHANNEL_2; /* PA1 */
 
   ultrasonic_front.TRIG_PORT = GPIOB;
   ultrasonic_front.TRIG_PIN = GPIO_PIN_8;
   ultrasonic_front.ECHO_PORT = GPIOA;
-  ultrasonic_front.ECHO_PIN = GPIO_PIN_6; // TIM3_CH1
+  ultrasonic_front.ECHO_PIN = GPIO_PIN_6; /* TIM3_CH1 */
 
-  ultrasonic_left.TRIG_PORT = GPIOB;
-  ultrasonic_left.TRIG_PIN = GPIO_PIN_9;
-  ultrasonic_left.ECHO_PORT = GPIOA;
-  ultrasonic_left.ECHO_PIN = GPIO_PIN_7; // TIM3_CH2
+  ultrasonic_left.TRIG_PORT = GPIOA;
+  ultrasonic_left.TRIG_PIN = GPIO_PIN_7;
+  ultrasonic_left.ECHO_PORT = GPIOB;
+  ultrasonic_left.ECHO_PIN = GPIO_PIN_9; /* TIM4_CH4 */
 
   ultrasonic_right.TRIG_PORT = GPIOB;
   ultrasonic_right.TRIG_PIN = GPIO_PIN_10;
   ultrasonic_right.ECHO_PORT = GPIOB;
-  ultrasonic_right.ECHO_PIN = GPIO_PIN_0; // TIM3_CH3
+  ultrasonic_right.ECHO_PIN = GPIO_PIN_0; /* TIM3_CH3 */
 
-  ir_sensor_left.GPIO_PORT = GPIOC;
-  ir_sensor_left.GPIO_PIN = GPIO_PIN_0;
-  ir_sensor_left.mode = IR_MODE_DIGITAL;
-  ir_sensor_right.GPIO_PORT = GPIOC;
-  ir_sensor_right.GPIO_PIN = GPIO_PIN_1;
-  ir_sensor_right.mode = IR_MODE_DIGITAL;
+  ir_sensor_front.GPIO_PORT = GPIOA;
+  ir_sensor_front.GPIO_PIN = GPIO_PIN_4;
+  ir_sensor_front.mode = IR_MODE_DIGITAL;
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   GPIO_InitStruct.Pin = GPIO_PIN_13;
@@ -161,9 +173,11 @@ void GPIO_Init(void) {
 /* ------------------------------------------------------------------ */
 void TIM_Init(void) {
   static TIM_HandleTypeDef htim3;
+  static TIM_HandleTypeDef htim4;
   TIM_IC_InitTypeDef sConfigIC = {0};
 
   __HAL_RCC_TIM3_CLK_ENABLE();
+  __HAL_RCC_TIM4_CLK_ENABLE();
 
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 64 - 1;
@@ -171,6 +185,13 @@ void TIM_Init(void) {
   htim3.Init.Period = 0xFFFF;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   HAL_TIM_IC_Init(&htim3);
+
+  htim4.Instance = TIM4;
+  htim4.Init.Prescaler = 64 - 1;
+  htim4.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim4.Init.Period = 0xFFFF;
+  htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  HAL_TIM_IC_Init(&htim4);
 
   sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_BOTHEDGE;
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
@@ -181,9 +202,9 @@ void TIM_Init(void) {
   ultrasonic_front.htim = &htim3;
   ultrasonic_front.tim_channel = TIM_CHANNEL_1;
 
-  HAL_TIM_IC_ConfigChannel(&htim3, &sConfigIC, TIM_CHANNEL_2);
-  ultrasonic_left.htim = &htim3;
-  ultrasonic_left.tim_channel = TIM_CHANNEL_2;
+  HAL_TIM_IC_ConfigChannel(&htim4, &sConfigIC, TIM_CHANNEL_4);
+  ultrasonic_left.htim = &htim4;
+  ultrasonic_left.tim_channel = TIM_CHANNEL_4;
 
   HAL_TIM_IC_ConfigChannel(&htim3, &sConfigIC, TIM_CHANNEL_3);
   ultrasonic_right.htim = &htim3;
@@ -191,12 +212,17 @@ void TIM_Init(void) {
 
   HAL_TIM_Base_Start(&htim3);
   HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_1);
-  HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_2);
   HAL_TIM_IC_Start_IT(&htim3, TIM_CHANNEL_3);
+
+  HAL_TIM_Base_Start(&htim4);
+  HAL_TIM_IC_Start_IT(&htim4, TIM_CHANNEL_4);
 
   HAL_NVIC_SetPriority(TIM3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(TIM3_IRQn);
+  HAL_NVIC_SetPriority(TIM4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(TIM4_IRQn);
 
+  motor_driver.motor_left.PWM_Max = 1000;
   motor_driver.motor_right.PWM_Max = 1000;
 }
 
@@ -207,15 +233,14 @@ void I2C_Init(void) {
   __HAL_RCC_I2C1_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  /* PB6 = SCL, PB7 = SDA — I2C1 default pins on STM32F103 */
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD; // open-drain, required for I2C
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 400000; // 400 kHz fast mode
+  hi2c1.Init.ClockSpeed = 400000;
   hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
   hi2c1.Init.OwnAddress1 = 0;
   hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
@@ -229,34 +254,34 @@ void I2C_Init(void) {
   imu.hi2c = &hi2c1;
   imu.i2c_addr = MPU6050_ADDR;
 }
+
 void ADC_Init(void) {}
 
 /* ------------------------------------------------------------------ */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-  if (htim->Instance != TIM3)
-    return;
-
-  switch (htim->Channel) {
-  case HAL_TIM_ACTIVE_CHANNEL_1:
-    HC_SR04_Echo_Callback(&ultrasonic_front);
-    break;
-  case HAL_TIM_ACTIVE_CHANNEL_2:
-    HC_SR04_Echo_Callback(&ultrasonic_left);
-    break;
-  case HAL_TIM_ACTIVE_CHANNEL_3:
-    HC_SR04_Echo_Callback(&ultrasonic_right);
-    break;
-  default:
-    break;
+  if (htim->Instance == TIM3) {
+    switch (htim->Channel) {
+    case HAL_TIM_ACTIVE_CHANNEL_1:
+      HC_SR04_Echo_Callback(&ultrasonic_front);
+      break;
+    case HAL_TIM_ACTIVE_CHANNEL_3:
+      HC_SR04_Echo_Callback(&ultrasonic_right);
+      break;
+    default:
+      break;
+    }
+  } else if (htim->Instance == TIM4) {
+    if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
+      HC_SR04_Echo_Callback(&ultrasonic_left);
   }
 }
 
 /* ------------------------------------------------------------------ */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-  if (GPIO_Pin == GPIO_PIN_0) {        /* left IR  */
-  } else if (GPIO_Pin == GPIO_PIN_1) { /* right IR */
+  if (GPIO_Pin == GPIO_PIN_4) { /* front IR – handled by FSM polling */
   }
 }
 
 /* ------------------------------------------------------------------ */
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
+void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }

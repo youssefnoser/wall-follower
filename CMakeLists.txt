@@ -87,6 +87,7 @@ set(SOURCES
     src/ir_sensor.c
     src/mpu6050.c
     src/esp8266.c
+    src/wall_follower_fsm.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )
