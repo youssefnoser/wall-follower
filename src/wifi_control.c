@@ -137,7 +137,7 @@ void WiFiControl_Update(L298N_t *motors, HC_SR04_t *front, HC_SR04_t *left,
                         HC_SR04_t *right, MPU6050_t *imu) {
   char rx_buf[64] = {0};
 
-  if (ESP8266_ReadLine(rx_buf, sizeof(rx_buf), 10)) {
+  if (ESP8266_ReadLine(rx_buf, sizeof(rx_buf), 50)) {
     if (strncmp(rx_buf, "+IPD", 4) == 0) {
       /* +IPD,<link_id>,<len>:<payload> */
       uint8_t link_id = 0;

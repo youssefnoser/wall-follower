@@ -204,15 +204,23 @@ bool ESP8266_ReadLine(char *buf, uint16_t max_len, uint32_t timeout_ms) {
   memset(buf, 0, max_len);
 
   while ((HAL_GetTick() - start) < timeout_ms) {
-    if (HAL_UART_Receive(&huart1, &ch, 1, 10) == HAL_OK) {
+    if (HAL_UART_Receive(&huart1, &ch, 1, 1) == HAL_OK) {
       if (idx < max_len - 1) {
         buf[idx++] = ch;
         buf[idx] = '\0';
       }
-      if (ch == '\n')
+      if (ch == '\n') {
+#if ESP8266_DEBUG
+        printf("[ESP LINE] %s", buf);
+#endif
         return true;
+      }
     }
   }
+#if ESP8266_DEBUG
+  if (idx > 0)
+    printf("[ESP LINE partial] %s\n", buf);
+#endif
   return idx > 0;
 }
 
