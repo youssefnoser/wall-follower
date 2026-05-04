@@ -98,9 +98,20 @@ void ESP8266_Init(void) {
 }
 
 /* ==================================================================
+ *  Low-level: drain any stale bytes sitting in the UART RX buffer
+ * ================================================================== */
+void ESP8266_FlushRX(void) {
+  uint8_t dummy;
+  while (HAL_UART_Receive(&huart1, &dummy, 1, 5) == HAL_OK)
+    ; /* discard */
+}
+
+/* ==================================================================
  *  Low-level: send an AT command string (appends \r\n automatically)
+ *  Flushes stale RX data first so the next response parse is clean.
  * ================================================================== */
 void ESP8266_SendCmd(const char *cmd) {
+  ESP8266_FlushRX();
 #if ESP8266_DEBUG
   printf("[ESP TX] %s\n", cmd);
 #endif

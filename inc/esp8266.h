@@ -13,6 +13,7 @@ extern UART_HandleTypeDef huart1;
 /* ---- Low-level --------------------------------------------------- */
 void ESP8266_Init(void);
 void ESP8266_SendCmd(const char *cmd);
+void ESP8266_FlushRX(void);
 bool ESP8266_CheckResponse(const char *expected_response, uint32_t timeout);
 bool ESP8266_WaitFor(const char *success, const char *fail, uint32_t timeout);
 bool ESP8266_ReadLine(char *buf, uint16_t max_len, uint32_t timeout_ms);

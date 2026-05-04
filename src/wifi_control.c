@@ -89,16 +89,32 @@ void WiFiControl_Init(const char *ssid, const char *password) {
   }
   printf("[WiFi] WiFi connected.\n");
 
+  /* Let the module settle after WiFi join – it may still be doing
+   * DHCP / ARP internally and will reply "busy p..." to commands. */
+  HAL_Delay(2000);
+  ESP8266_FlushRX(); /* drain any async messages (busy p..., etc.) */
+
   /* Enable multiple connections (required for TCP server) */
   if (!ESP8266_SetMux(1)) {
     printf("[WiFi] Failed to set MUX mode.\n");
     return;
   }
 
-  /* Start TCP server on port 1234 */
-  if (!ESP8266_StartServer(1234)) {
-    printf("[WiFi] Failed to start server.\n");
-    return;
+  /* Start TCP server on port 1234 (retry up to 3 times on busy/error) */
+  {
+    uint8_t retries = 3;
+    bool ok = false;
+    while (retries-- > 0) {
+      ok = ESP8266_StartServer(1234);
+      if (ok) break;
+      printf("[WiFi] Server start failed, retrying...\n");
+      HAL_Delay(1000);
+      ESP8266_FlushRX();
+    }
+    if (!ok) {
+      printf("[WiFi] Failed to start server.\n");
+      return;
+    }
   }
 
   /* Print local IP for user reference */
