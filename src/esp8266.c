@@ -10,7 +10,48 @@
 UART_HandleTypeDef huart2;
 
 /* ==================================================================
+ *  Internal: configure USART2 at a given baud rate
+ * ================================================================== */
+static void esp8266_uart_setup(uint32_t baud) {
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = baud;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  HAL_UART_DeInit(&huart2);
+  HAL_UART_Init(&huart2);
+}
+
+/* Quick "AT" probe – returns true if we get "OK" back */
+static bool esp8266_probe(void) {
+  HAL_UART_Transmit(&huart2, (uint8_t *)"AT\r\n", 4, HAL_MAX_DELAY);
+
+  char rx_buf[64];
+  uint16_t rx_idx = 0;
+  uint32_t start = HAL_GetTick();
+  uint8_t ch;
+  memset(rx_buf, 0, sizeof(rx_buf));
+
+  while ((HAL_GetTick() - start) < 1000) {
+    if (HAL_UART_Receive(&huart2, &ch, 1, 10) == HAL_OK) {
+      if (rx_idx < sizeof(rx_buf) - 1)
+        rx_buf[rx_idx++] = ch;
+      if (strstr(rx_buf, "OK") != NULL)
+        return true;
+    }
+  }
+#if ESP8266_DEBUG
+  printf("[ESP] probe buf(%u): %s\n", rx_idx, rx_buf);
+#endif
+  return false;
+}
+
+/* ==================================================================
  *  Hardware Init – USART2 on PA2 (TX) / PA3 (RX)
+ *  Tries common baud rates until the module responds to "AT".
  * ================================================================== */
 void ESP8266_Init(void) {
   __HAL_RCC_USART2_CLK_ENABLE();
@@ -30,15 +71,30 @@ void ESP8266_Init(void) {
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200; // Standard default baud rate for ESP-01
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  HAL_UART_Init(&huart2);
+  /* Try common ESP8266 baud rates */
+  static const uint32_t baud_rates[] = {115200, 9600, 57600, 38400, 19200};
+  static const uint8_t num_rates = sizeof(baud_rates) / sizeof(baud_rates[0]);
+
+  for (uint8_t i = 0; i < num_rates; i++) {
+#if ESP8266_DEBUG
+    printf("[ESP] Trying %lu baud...\n", (unsigned long)baud_rates[i]);
+#endif
+    esp8266_uart_setup(baud_rates[i]);
+    HAL_Delay(100);
+
+    if (esp8266_probe()) {
+#if ESP8266_DEBUG
+      printf("[ESP] Found module at %lu baud.\n", (unsigned long)baud_rates[i]);
+#endif
+      return; /* success – UART is now locked to the working rate */
+    }
+  }
+
+  /* Fall back to 115200 if nothing responded */
+#if ESP8266_DEBUG
+  printf("[ESP] No response at any baud rate! Defaulting to 115200.\n");
+#endif
+  esp8266_uart_setup(115200);
 }
 
 /* ==================================================================
