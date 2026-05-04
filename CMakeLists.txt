@@ -88,6 +88,7 @@ set(SOURCES
     src/mpu6050.c
     src/esp8266.c
     src/wall_follower_fsm.c
+    src/wifi_control.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )

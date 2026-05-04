@@ -5,7 +5,14 @@
 #include "mpu6050.h"
 #include "stm32f1xx_hal.h"
 #include "wall_follower_fsm.h"
+#include "wifi_control.h"
 #include <stdio.h>
+
+/* Uncomment to build in WiFi remote-control mode instead of wall follower. */
+/* #define WIFI_CONTROL_MODE */
+#define WIFI_CONTROL_MODE
+#define WIFI_SSID     "DIRECT-NS-Hotspot"
+#define WIFI_PASSWORD "12345678"
 
 /* Global Handlers */
 L298N_t motor_driver;
@@ -46,7 +53,18 @@ int main(void) {
 
   L298N_Init(&motor_driver);
 
-  MPU6050_Init(&imu);
+  // MPU6050_Init(&imu);
+
+#ifdef WIFI_CONTROL_MODE
+
+  WiFiControl_Init(WIFI_SSID, WIFI_PASSWORD);
+
+  while (1) {
+    WiFiControl_Update(&motor_driver, &ultrasonic_front, &ultrasonic_left,
+                       &ultrasonic_right, &imu);
+  }
+
+#else /* wall follower mode */
 
   /* Initialise FSM – must be called after all hardware inits */
   WallFollower_Init(&fsm);
@@ -54,7 +72,13 @@ int main(void) {
   printf("Wall Follower FSM ready.\n");
 
   while (1) {
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+    /* Blink LED every 2000 ms (non-blocking) */
+    static uint32_t led_last = 0;
+    uint32_t now = HAL_GetTick();
+    if ((now - led_last) >= 2000) {
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+      led_last = now;
+    }
 
     /* ---- Ultrasonics ------------------------------------------------- */
     HC_SR04_StartMeasurement(&ultrasonic_front);
@@ -92,6 +116,8 @@ int main(void) {
 
     HAL_Delay(100);
   }
+
+#endif /* WIFI_CONTROL_MODE */
 
   return 0;
 }
