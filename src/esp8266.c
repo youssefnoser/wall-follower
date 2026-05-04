@@ -2,6 +2,11 @@
 #include <stdio.h>
 #include <string.h>
 
+/* Set to 1 to print all AT traffic via semihosting/printf */
+#ifndef ESP8266_DEBUG
+#define ESP8266_DEBUG 1
+#endif
+
 UART_HandleTypeDef huart2;
 
 /* ==================================================================
@@ -40,6 +45,9 @@ void ESP8266_Init(void) {
  *  Low-level: send an AT command string (appends \r\n automatically)
  * ================================================================== */
 void ESP8266_SendCmd(const char *cmd) {
+#if ESP8266_DEBUG
+  printf("[ESP TX] %s\n", cmd);
+#endif
   HAL_UART_Transmit(&huart2, (uint8_t *)cmd, strlen(cmd), HAL_MAX_DELAY);
   HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 }
@@ -62,10 +70,17 @@ bool ESP8266_CheckResponse(const char *expected_response, uint32_t timeout) {
         rx_buf[rx_idx] = '\0'; // Null terminate
       }
       if (strstr(rx_buf, expected_response) != NULL) {
+#if ESP8266_DEBUG
+        printf("[ESP RX] OK got \"%s\" | buf: %s\n", expected_response, rx_buf);
+#endif
         return true;
       }
     }
   }
+#if ESP8266_DEBUG
+  printf("[ESP RX] TIMEOUT waiting for \"%s\" (%lums) | buf(%u): %s\n",
+         expected_response, (unsigned long)timeout, rx_idx, rx_buf);
+#endif
   return false;
 }
 
@@ -91,13 +106,23 @@ bool ESP8266_WaitFor(const char *success, const char *fail, uint32_t timeout) {
       /* Check fail FIRST – avoids false positives when the success
        * token is a substring of a longer failure message */
       if (fail && strstr(rx_buf, fail) != NULL) {
+#if ESP8266_DEBUG
+        printf("[ESP RX] FAIL got \"%s\" | buf: %s\n", fail, rx_buf);
+#endif
         return false;
       }
       if (strstr(rx_buf, success) != NULL) {
+#if ESP8266_DEBUG
+        printf("[ESP RX] OK got \"%s\" | buf: %s\n", success, rx_buf);
+#endif
         return true;
       }
     }
   }
+#if ESP8266_DEBUG
+  printf("[ESP RX] TIMEOUT waiting for \"%s\" (%lums) | buf(%u): %s\n",
+         success, (unsigned long)timeout, rx_idx, rx_buf);
+#endif
   return false;
 }
 

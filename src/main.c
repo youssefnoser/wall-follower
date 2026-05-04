@@ -11,7 +11,8 @@
 /* Uncomment to build in WiFi remote-control mode instead of wall follower. */
 /* #define WIFI_CONTROL_MODE */
 #define WIFI_CONTROL_MODE
-#define WIFI_SSID     "DIRECT-NS-Hotspot"
+#define ESP8266_DEBUG 1
+#define WIFI_SSID "DIRECT-NS-Hotspot"
 #define WIFI_PASSWORD "12345678"
 
 /* Global Handlers */
