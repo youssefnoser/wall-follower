@@ -63,27 +63,49 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
 
 void WiFiControl_Init(const char *ssid, const char *password) {
   ESP8266_Init();
+  HAL_Delay(1000); /* Give ESP8266 time to boot after power-on */
 
-  ESP8266_SendCmd("AT");
-  ESP8266_CheckResponse("OK", 5000);
+  /* Disable echo so responses are clean (no command text echoed back) */
+  ESP8266_DisableEcho();
 
-  printf("Connecting to WiFi...\n");
-  if (ESP8266_ConnectWiFi(ssid, password))
-    printf("WiFi connected.\n");
-  else
-    printf("WiFi connection failed.\n");
+  /* Verify module is alive */
+  if (!ESP8266_Test()) {
+    printf("[WiFi] ESP8266 not responding!\n");
+    return;
+  }
+  printf("[WiFi] ESP8266 ready.\n");
 
-  ESP8266_SendCmd("AT+CIPMUX=1");
-  ESP8266_CheckResponse("OK", 5000);
+  /* Set Station + SoftAP mode so we can join a network AND run a server */
+  if (!ESP8266_SetMode(1)) {
+    printf("[WiFi] Failed to set WiFi mode.\n");
+    return;
+  }
 
-  ESP8266_SendCmd("AT+CIPSERVER=1,1234");
-  ESP8266_CheckResponse("OK", 5000);
+  /* Connect to the access point */
+  printf("[WiFi] Connecting to %s ...\n", ssid);
+  if (!ESP8266_ConnectWiFi(ssid, password)) {
+    printf("[WiFi] WiFi connection failed.\n");
+    return;
+  }
+  printf("[WiFi] WiFi connected.\n");
 
-  ESP8266_SendCmd("AT+CIFSR");
-  ESP8266_CheckResponse("OK", 3000);
+  /* Enable multiple connections (required for TCP server) */
+  if (!ESP8266_SetMux(1)) {
+    printf("[WiFi] Failed to set MUX mode.\n");
+    return;
+  }
 
-  printf("WiFi control server ready on port 1234.\n");
-  printf("Commands: FORWARD | BACK | LEFT | RIGHT | STOP\n");
+  /* Start TCP server on port 1234 */
+  if (!ESP8266_StartServer(1234)) {
+    printf("[WiFi] Failed to start server.\n");
+    return;
+  }
+
+  /* Print local IP for user reference */
+  ESP8266_GetIP();
+
+  printf("[WiFi] Control server ready on port 1234.\n");
+  printf("[WiFi] Commands: FORWARD | BACK | LEFT | RIGHT | STOP\n");
 }
 
 /*
