@@ -7,27 +7,27 @@
 #define ESP8266_DEBUG 1
 #endif
 
-UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart1;
 
 /* ==================================================================
- *  Internal: configure USART2 at a given baud rate
+ *  Internal: configure USART1 at a given baud rate
  * ================================================================== */
 static void esp8266_uart_setup(uint32_t baud) {
-  huart2.Instance = USART2;
-  huart2.Init.BaudRate = baud;
-  huart2.Init.WordLength = UART_WORDLENGTH_8B;
-  huart2.Init.StopBits = UART_STOPBITS_1;
-  huart2.Init.Parity = UART_PARITY_NONE;
-  huart2.Init.Mode = UART_MODE_TX_RX;
-  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
-  HAL_UART_DeInit(&huart2);
-  HAL_UART_Init(&huart2);
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = baud;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  HAL_UART_DeInit(&huart1);
+  HAL_UART_Init(&huart1);
 }
 
 /* Quick "AT" probe – returns true if we get "OK" back */
 static bool esp8266_probe(void) {
-  HAL_UART_Transmit(&huart2, (uint8_t *)"AT\r\n", 4, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)"AT\r\n", 4, HAL_MAX_DELAY);
 
   char rx_buf[64];
   uint16_t rx_idx = 0;
@@ -36,7 +36,7 @@ static bool esp8266_probe(void) {
   memset(rx_buf, 0, sizeof(rx_buf));
 
   while ((HAL_GetTick() - start) < 1000) {
-    if (HAL_UART_Receive(&huart2, &ch, 1, 10) == HAL_OK) {
+    if (HAL_UART_Receive(&huart1, &ch, 1, 10) == HAL_OK) {
       if (rx_idx < sizeof(rx_buf) - 1)
         rx_buf[rx_idx++] = ch;
       if (strstr(rx_buf, "OK") != NULL)
@@ -50,23 +50,23 @@ static bool esp8266_probe(void) {
 }
 
 /* ==================================================================
- *  Hardware Init – USART2 on PA2 (TX) / PA3 (RX)
+ *  Hardware Init – USART1 on PA9 (TX) / PA10 (RX)
  *  Tries common baud rates until the module responds to "AT".
  * ================================================================== */
 void ESP8266_Init(void) {
-  __HAL_RCC_USART2_CLK_ENABLE();
+  __HAL_RCC_USART1_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-  // PA2 TX -> ESP RX
-  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  // PA9 TX -> ESP RX
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  // PA3 RX -> ESP TX
-  GPIO_InitStruct.Pin = GPIO_PIN_3;
+  // PA10 RX -> ESP TX
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -104,8 +104,8 @@ void ESP8266_SendCmd(const char *cmd) {
 #if ESP8266_DEBUG
   printf("[ESP TX] %s\n", cmd);
 #endif
-  HAL_UART_Transmit(&huart2, (uint8_t *)cmd, strlen(cmd), HAL_MAX_DELAY);
-  HAL_UART_Transmit(&huart2, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)cmd, strlen(cmd), HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2, HAL_MAX_DELAY);
 }
 
 /* ==================================================================
@@ -120,7 +120,7 @@ bool ESP8266_CheckResponse(const char *expected_response, uint32_t timeout) {
   memset(rx_buf, 0, sizeof(rx_buf));
 
   while ((HAL_GetTick() - start_time) < timeout) {
-    if (HAL_UART_Receive(&huart2, &ch, 1, 10) == HAL_OK) {
+    if (HAL_UART_Receive(&huart1, &ch, 1, 10) == HAL_OK) {
       if (rx_idx < sizeof(rx_buf) - 1) {
         rx_buf[rx_idx++] = ch;
         rx_buf[rx_idx] = '\0'; // Null terminate
@@ -154,7 +154,7 @@ bool ESP8266_WaitFor(const char *success, const char *fail, uint32_t timeout) {
   memset(rx_buf, 0, sizeof(rx_buf));
 
   while ((HAL_GetTick() - start_time) < timeout) {
-    if (HAL_UART_Receive(&huart2, &ch, 1, 10) == HAL_OK) {
+    if (HAL_UART_Receive(&huart1, &ch, 1, 10) == HAL_OK) {
       if (rx_idx < sizeof(rx_buf) - 1) {
         rx_buf[rx_idx++] = ch;
         rx_buf[rx_idx] = '\0';
@@ -193,7 +193,7 @@ bool ESP8266_ReadLine(char *buf, uint16_t max_len, uint32_t timeout_ms) {
   memset(buf, 0, max_len);
 
   while ((HAL_GetTick() - start) < timeout_ms) {
-    if (HAL_UART_Receive(&huart2, &ch, 1, 10) == HAL_OK) {
+    if (HAL_UART_Receive(&huart1, &ch, 1, 10) == HAL_OK) {
       if (idx < max_len - 1) {
         buf[idx++] = ch;
         buf[idx] = '\0';
@@ -341,7 +341,7 @@ bool ESP8266_Send(const uint8_t *data, uint16_t len) {
   }
 
   /* Transmit the raw payload */
-  HAL_UART_Transmit(&huart2, (uint8_t *)data, len, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)data, len, HAL_MAX_DELAY);
 
   return ESP8266_WaitFor("SEND OK", "SEND FAIL", 10000);
 }
@@ -356,7 +356,7 @@ bool ESP8266_SendMux(uint8_t id, const uint8_t *data, uint16_t len) {
     return false;
   }
 
-  HAL_UART_Transmit(&huart2, (uint8_t *)data, len, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)data, len, HAL_MAX_DELAY);
 
   return ESP8266_WaitFor("SEND OK", "SEND FAIL", 10000);
 }

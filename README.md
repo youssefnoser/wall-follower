@@ -46,10 +46,7 @@ STM32_Motor_Control/
 
 - **LED**: PC13
 
-## ESP8266 WIFI
 
-- PA2 TX -> ESP RX
-- PA3 RX -> ESP TX
 
 ## Module Usage
 

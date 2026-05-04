@@ -8,7 +8,7 @@
 /* Maximum response buffer size */
 #define ESP8266_RX_BUF_SIZE 512
 
-extern UART_HandleTypeDef huart2;
+extern UART_HandleTypeDef huart1;
 
 /* ---- Low-level --------------------------------------------------- */
 void ESP8266_Init(void);
