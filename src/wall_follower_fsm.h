@@ -2,6 +2,7 @@
 #define WALL_FOLLOWER_FSM_H
 
 #include <stdint.h>
+#include "pid.h"
 
 /* -----------------------------------------------------------------------
  * Thresholds  (tune these in place)
@@ -11,6 +12,22 @@
 #define MAX_RETRIES 3      /* Counter limit before returning to Idle      */
 #define YAW_TOL 5.0f       /* deg – rotation-complete tolerance           */
 #define GYRO_DEADBAND 2.0f /* deg/s - noise floor for gyro Z drift */
+
+/* ---- PID / filter tuning -------------------------------------------- */
+#define WALL_SETPOINT 15.0f /* cm  – desired distance from nearest wall  */
+#define EMA_ALPHA     0.3f  /* Exponential moving average filter coeff   */
+#define BASE_SPEED    60    /* 0–100 PWM duty for forward drive          */
+#define TURN_SPEED_MIN 25   /* minimum turn PWM so motors don't stall    */
+
+/* PID gains – wall centering (output = differential speed -100..+100)   */
+#define WALL_KP 2.0f
+#define WALL_KI 0.05f
+#define WALL_KD 0.5f
+
+/* PID gains – yaw control   (output = turn speed 0..100)               */
+#define YAW_KP  1.5f
+#define YAW_KI  0.0f
+#define YAW_KD  0.3f
 
 /* -----------------------------------------------------------------------
  * States
@@ -40,6 +57,15 @@ typedef struct {
 
   /* Timing for dt calculation */
   uint32_t last_tick; /* HAL_GetTick() value from last update call  */
+
+  /* PID controllers */
+  PID_t pid_wall;   /* wall-centering (used in FSM_FORWARD)       */
+  PID_t pid_yaw;    /* yaw rotation   (used in TURN_LEFT/RIGHT)   */
+
+  /* Ultrasonic EMA-filtered distances */
+  float filt_front;
+  float filt_left;
+  float filt_right;
 } WallFollower_t;
 
 /* -----------------------------------------------------------------------

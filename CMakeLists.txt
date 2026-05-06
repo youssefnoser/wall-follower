@@ -89,6 +89,7 @@ set(SOURCES
     src/ESP8266.c
     src/dwt_stm32_delay.c
     src/wall_follower_fsm.c
+    src/pid.c
     src/wifi_control.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}

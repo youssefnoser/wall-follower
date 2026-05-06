@@ -8,9 +8,9 @@
 #include "wifi_control.h"
 #include <stdio.h>
 
-/* Uncomment to build in WiFi remote-control mode instead of wall follower. */
+/* Uncomment the next line to build in WiFi remote-control mode instead of
+ * the PID wall follower.  Leave it commented for autonomous wall following. */
 /* #define WIFI_CONTROL_MODE */
-#define WIFI_CONTROL_MODE
 #define ESP8266_DEBUG 1
 #define WIFI_SSID "Youssef's A71"
 #define WIFI_PASSWORD "lol123a@@"
@@ -46,7 +46,7 @@ int main(void) {
   TIM_Init();
   I2C_Init();
   ADC_Init();
-a
+
   HC_SR04_Init(&ultrasonic_front);
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
@@ -84,11 +84,11 @@ a
 
     /* ---- Ultrasonics ------------------------------------------------- */
     HC_SR04_StartMeasurement(&ultrasonic_front);
-    HAL_Delay(50);
+    HAL_Delay(30);
     HC_SR04_StartMeasurement(&ultrasonic_left);
-    HAL_Delay(50);
+    HAL_Delay(30);
     HC_SR04_StartMeasurement(&ultrasonic_right);
-    HAL_Delay(50);
+    HAL_Delay(30);
 
     float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
     float dist_left = HC_SR04_GetDistance(&ultrasonic_left);
@@ -110,13 +110,19 @@ a
                         imu.gyro.z); /* gyro Z in degrees/second */
 
     /* ---- Debug print -------------------------------------------------- */
-    printf("[FSM] %-13s | F:%5.1f L:%5.1f R:%5.1f cm | IR:%d | Yaw:%7.1f deg | "
-           "Retries "
-           "L:%d R:%d\n",
-           FSM_StateName(fsm.state), dist_front, dist_left, dist_right, ir_safe,
-           fsm.yaw, fsm.retry_left, fsm.retry_right);
+    printf("[FSM] %-13s | Raw F:%5.1f L:%5.1f R:%5.1f | "
+           "Filt F:%5.1f L:%5.1f R:%5.1f cm | IR:%d | "
+           "Yaw:%7.1f->%7.1f | "
+           "WallPID:%6.1f | Retries L:%d R:%d\n",
+           FSM_StateName(fsm.state),
+           dist_front, dist_left, dist_right,
+           fsm.filt_front, fsm.filt_left, fsm.filt_right,
+           ir_safe,
+           fsm.yaw, fsm.yaw_target,
+           fsm.pid_wall.prev_error * fsm.pid_wall.Kp, /* approx P-term */
+           fsm.retry_left, fsm.retry_right);
 
-    HAL_Delay(100);
+    HAL_Delay(50); /* Faster loop → smoother PID response */
   }
 
 #endif /* WIFI_CONTROL_MODE */
