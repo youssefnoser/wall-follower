@@ -1,4 +1,4 @@
-#include "esp8266.h"
+#include "ESP8266.h"
 #include "hc_sr04.h"
 #include "ir_sensor.h"
 #include "l298n.h"
@@ -12,8 +12,8 @@
 /* #define WIFI_CONTROL_MODE */
 #define WIFI_CONTROL_MODE
 #define ESP8266_DEBUG 1
-#define WIFI_SSID "DIRECT-NS-Hotspot"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "Youssef's A71"
+#define WIFI_PASSWORD "lol123a@@"
 
 /* Global Handlers */
 L298N_t motor_driver;
@@ -35,6 +35,7 @@ void GPIO_Init(void);
 void TIM_Init(void);
 void I2C_Init(void);
 void ADC_Init(void);
+void USART1_UART_Init(void);
 
 int main(void) {
   HAL_Init();
@@ -45,7 +46,7 @@ int main(void) {
   TIM_Init();
   I2C_Init();
   ADC_Init();
-
+a
   HC_SR04_Init(&ultrasonic_front);
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
@@ -54,7 +55,7 @@ int main(void) {
 
   L298N_Init(&motor_driver);
 
-  // MPU6050_Init(&imu);
+  MPU6050_Init(&imu);
 
 #ifdef WIFI_CONTROL_MODE
 
@@ -285,6 +286,42 @@ void I2C_Init(void) {
 void ADC_Init(void) {}
 
 /* ------------------------------------------------------------------ */
+/* USART1: PA9 TX (AF push-pull) / PA10 RX (input pull-up), 115200-8-N-1.
+ * Used by the ESP8266 driver via _WIFI_USART. */
+void USART1_UART_Init(void) {
+  __HAL_RCC_USART1_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_AFIO_CLK_ENABLE();
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  GPIO_InitStruct.Pin   = GPIO_PIN_9;
+  GPIO_InitStruct.Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin  = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  _WIFI_USART.Instance          = USART1;
+  _WIFI_USART.Init.BaudRate     = 115200;
+  _WIFI_USART.Init.WordLength   = UART_WORDLENGTH_8B;
+  _WIFI_USART.Init.StopBits     = UART_STOPBITS_1;
+  _WIFI_USART.Init.Parity       = UART_PARITY_NONE;
+  _WIFI_USART.Init.Mode         = UART_MODE_TX_RX;
+  _WIFI_USART.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+  _WIFI_USART.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&_WIFI_USART) != HAL_OK)
+    while (1)
+      ;
+
+  HAL_NVIC_SetPriority(USART1_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+}
+
+/* ------------------------------------------------------------------ */
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
   if (htim->Instance == TIM3) {
     switch (htim->Channel) {
@@ -312,3 +349,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 /* ------------------------------------------------------------------ */
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
 void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }
+void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
+
+/* HAL invokes this once HAL_UART_Receive_IT completes a single byte.
+ * The driver's Wifi_RxCallBack pushes that byte into Wifi.RxBuffer and
+ * re-arms the next single-byte IT. */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+  if (huart->Instance == USART1)
+    Wifi_RxCallBack();
+}

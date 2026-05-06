@@ -1,6 +1,13 @@
 {
-    "cmake.sourceDirectory": "/home/exo/Embedded",
+    "cmake.sourceDirectory": "/home/ziad/Downloads/Embedded",
     "cmake.useCMakePresets": "always",
     "cortex-debug.gdbPath": "gdb-multiarch",
-    "cortex-debug.armToolchainPath": "/usr/bin"
+    "cortex-debug.armToolchainPath": "/usr/bin",
+    "python.autoComplete.extraPaths": [
+        "/opt/ros/foxy/lib/python3.8/site-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/opt/ros/foxy/lib/python3.8/site-packages"
+    ],
+    "cortex-debug.variableUseNaturalFormat": false
 }

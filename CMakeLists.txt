@@ -86,7 +86,8 @@ set(SOURCES
     src/hc_sr04.c
     src/ir_sensor.c
     src/mpu6050.c
-    src/esp8266.c
+    src/ESP8266.c
+    src/dwt_stm32_delay.c
     src/wall_follower_fsm.c
     src/wifi_control.c
     ${HAL_SOURCES}
@@ -122,13 +123,17 @@ if(CMAKE_SIZE)
     )
 endif()
 
-# ── Flash target (st-flash) ───────────────────────────────────────────────────
-find_program(ST_FLASH st-flash)
-if(ST_FLASH)
+# ── Flash target (openocd) ────────────────────────────────────────────────────
+find_program(OPENOCD openocd)
+if(OPENOCD)
     add_custom_target(flash
-        COMMAND ${ST_FLASH} write ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.bin 0x08000000
+        COMMAND ${OPENOCD}
+            -f interface/stlink-v2.cfg
+            -c "set CPUTAPID 0x2ba01477"
+            -f target/stm32f1x.cfg
+            -c "program ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.elf verify reset exit"
         DEPENDS ${PROJECT_NAME}.elf
-        COMMENT "Flashing via st-link"
+        COMMENT "Flashing via OpenOCD"
     )
 endif()
 

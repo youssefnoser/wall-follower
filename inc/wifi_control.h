@@ -1,7 +1,7 @@
 #ifndef WIFI_CONTROL_H
 #define WIFI_CONTROL_H
 
-#include "esp8266.h"
+#include "ESP8266.h"
 #include "hc_sr04.h"
 #include "l298n.h"
 #include "mpu6050.h"
