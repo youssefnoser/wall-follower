@@ -1,4 +1,5 @@
 #include "ESP8266.h"
+#include "dwt_stm32_delay.h"
 #include "hc_sr04.h"
 #include "ir_sensor.h"
 #include "l298n.h"
@@ -10,8 +11,8 @@
 
 /* Uncomment to build in WiFi remote-control mode instead of wall follower. */
 /* #define WIFI_CONTROL_MODE */
-#define WIFI_CONTROL_MODE
-#define ESP8266_DEBUG 1
+// #define WIFI_CONTROL_MODE
+// #define ESP8266_DEBUG 1
 #define WIFI_SSID "Youssef's A71"
 #define WIFI_PASSWORD "lol123a@@"
 
@@ -37,16 +38,19 @@ void I2C_Init(void);
 void ADC_Init(void);
 void USART1_UART_Init(void);
 
-int main(void) {
+int main(void)
+{
   HAL_Init();
   SystemClock_Config();
+  DWT_Delay_Init();
   initialise_monitor_handles();
-
+  USART1_UART_Init();
+  
   GPIO_Init();
   TIM_Init();
   I2C_Init();
   ADC_Init();
-a
+
   HC_SR04_Init(&ultrasonic_front);
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
@@ -61,7 +65,8 @@ a
 
   WiFiControl_Init(WIFI_SSID, WIFI_PASSWORD);
 
-  while (1) {
+  while (1)
+  {
     WiFiControl_Update(&motor_driver, &ultrasonic_front, &ultrasonic_left,
                        &ultrasonic_right, &imu);
   }
@@ -73,11 +78,13 @@ a
 
   printf("Wall Follower FSM ready.\n");
 
-  while (1) {
+  while (1)
+  {
     /* Blink LED every 2000 ms (non-blocking) */
     static uint32_t led_last = 0;
     uint32_t now = HAL_GetTick();
-    if ((now - led_last) >= 2000) {
+    if ((now - led_last) >= 2000)
+    {
       HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
       led_last = now;
     }
@@ -128,7 +135,8 @@ a
 void SysTick_Handler(void) { HAL_IncTick(); }
 
 /* ------------------------------------------------------------------ */
-void SystemClock_Config(void) {
+void SystemClock_Config(void)
+{
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
@@ -154,7 +162,8 @@ void SystemClock_Config(void) {
 }
 
 /* ------------------------------------------------------------------ */
-void GPIO_Init(void) {
+void GPIO_Init(void)
+{
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -199,7 +208,8 @@ void GPIO_Init(void) {
 }
 
 /* ------------------------------------------------------------------ */
-void TIM_Init(void) {
+void TIM_Init(void)
+{
   static TIM_HandleTypeDef htim3;
   static TIM_HandleTypeDef htim4;
   TIM_IC_InitTypeDef sConfigIC = {0};
@@ -255,7 +265,8 @@ void TIM_Init(void) {
 }
 
 /* ------------------------------------------------------------------ */
-void I2C_Init(void) {
+void I2C_Init(void)
+{
   static I2C_HandleTypeDef hi2c1;
 
   __HAL_RCC_I2C1_CLK_ENABLE();
@@ -288,30 +299,31 @@ void ADC_Init(void) {}
 /* ------------------------------------------------------------------ */
 /* USART1: PA9 TX (AF push-pull) / PA10 RX (input pull-up), 115200-8-N-1.
  * Used by the ESP8266 driver via _WIFI_USART. */
-void USART1_UART_Init(void) {
+void USART1_UART_Init(void)
+{
   __HAL_RCC_USART1_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_AFIO_CLK_ENABLE();
 
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-  GPIO_InitStruct.Pin   = GPIO_PIN_9;
-  GPIO_InitStruct.Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin  = GPIO_PIN_10;
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  _WIFI_USART.Instance          = USART1;
-  _WIFI_USART.Init.BaudRate     = 115200;
-  _WIFI_USART.Init.WordLength   = UART_WORDLENGTH_8B;
-  _WIFI_USART.Init.StopBits     = UART_STOPBITS_1;
-  _WIFI_USART.Init.Parity       = UART_PARITY_NONE;
-  _WIFI_USART.Init.Mode         = UART_MODE_TX_RX;
-  _WIFI_USART.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+  _WIFI_USART.Instance = USART1;
+  _WIFI_USART.Init.BaudRate = 115200;
+  _WIFI_USART.Init.WordLength = UART_WORDLENGTH_8B;
+  _WIFI_USART.Init.StopBits = UART_STOPBITS_1;
+  _WIFI_USART.Init.Parity = UART_PARITY_NONE;
+  _WIFI_USART.Init.Mode = UART_MODE_TX_RX;
+  _WIFI_USART.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   _WIFI_USART.Init.OverSampling = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&_WIFI_USART) != HAL_OK)
     while (1)
@@ -322,9 +334,12 @@ void USART1_UART_Init(void) {
 }
 
 /* ------------------------------------------------------------------ */
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-  if (htim->Instance == TIM3) {
-    switch (htim->Channel) {
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM3)
+  {
+    switch (htim->Channel)
+    {
     case HAL_TIM_ACTIVE_CHANNEL_1:
       HC_SR04_Echo_Callback(&ultrasonic_front);
       break;
@@ -334,15 +349,19 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
     default:
       break;
     }
-  } else if (htim->Instance == TIM4) {
+  }
+  else if (htim->Instance == TIM4)
+  {
     if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_4)
       HC_SR04_Echo_Callback(&ultrasonic_left);
   }
 }
 
 /* ------------------------------------------------------------------ */
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-  if (GPIO_Pin == GPIO_PIN_4) { /* front IR – handled by FSM polling */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_4)
+  { /* front IR – handled by FSM polling */
   }
 }
 
@@ -354,7 +373,8 @@ void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
 /* HAL invokes this once HAL_UART_Receive_IT completes a single byte.
  * The driver's Wifi_RxCallBack pushes that byte into Wifi.RxBuffer and
  * re-arms the next single-byte IT. */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
   if (huart->Instance == USART1)
     Wifi_RxCallBack();
 }
