@@ -11,7 +11,7 @@
 #define MAX_RETRIES 3      /* Counter limit before returning to Idle      */
 #define YAW_TOL 5.0f       /* deg – rotation-complete tolerance           */
 #define GYRO_DEADBAND 2.0f /* deg/s - noise floor for gyro Z drift */
-#define STATE_SETTLE_MS 150 /* ms - blocking delay on every state transition */
+#define STATE_SETTLE_MS 2000 /* ms - blocking delay on every state transition */
 
 /* -----------------------------------------------------------------------
  * States
