@@ -88,6 +88,9 @@ void WallFollower_Init(WallFollower_t *wf) {
 void WallFollower_Update(WallFollower_t *wf, float dist_f, float dist_l,
                          float dist_r, uint8_t ir_safe, float gyro_z_dps) {
   /* ---- compute dt --------------------------------------------------- */
+  FSM_State_t state_at_entry = wf->state;
+
+  /* ---- integrate yaw ------------------------------------------------ */
   uint32_t now = HAL_GetTick();
   float dt = (float)(now - wf->last_tick) * 0.001f; /* ms → s */
   wf->last_tick = now;
@@ -266,6 +269,12 @@ void WallFollower_Update(WallFollower_t *wf, float dist_f, float dist_l,
       wf->state = FSM_TURN_RIGHT;
     }
     break;
+  }
+
+  /* Brief settle on any transition: lets motors actually respond and
+   * absorbs single-cycle IR flickers that would otherwise bounce states. */
+  if (wf->state != state_at_entry) {
+    HAL_Delay(STATE_SETTLE_MS);
   }
 }
 

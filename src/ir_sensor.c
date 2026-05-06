@@ -51,7 +51,9 @@ uint8_t IR_Sensor_GetState(IR_Sensor_t *ir_sensor)
 {
     if (ir_sensor->mode == IR_MODE_DIGITAL)
     {
-        ir_sensor->state = HAL_GPIO_ReadPin(ir_sensor->GPIO_PORT, ir_sensor->GPIO_PIN);
+        /* Active-low module: pin LOW = object detected, pin HIGH = clear. */
+        GPIO_PinState pin = HAL_GPIO_ReadPin(ir_sensor->GPIO_PORT, ir_sensor->GPIO_PIN);
+        ir_sensor->state = (pin == GPIO_PIN_RESET) ? IR_OBJECT_DETECTED : IR_NO_OBJECT;
         return ir_sensor->state;
     }
     

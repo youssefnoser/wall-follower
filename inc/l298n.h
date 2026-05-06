@@ -22,6 +22,9 @@ typedef struct {
     uint16_t IN1_PIN;
     GPIO_TypeDef *IN2_PORT;
     uint16_t IN2_PIN;
+    GPIO_TypeDef *EN_PORT;
+    uint16_t EN_PIN;
+    /* Kept for ABI compatibility, no longer used. */
     TIM_HandleTypeDef *htim;
     uint32_t PWM_Channel;
     uint32_t PWM_Max;
