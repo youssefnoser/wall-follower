@@ -167,27 +167,85 @@ static void poll_async_events(L298N_t *motors) {
  * Public API
  * --------------------------------------------------------------------- */
 
-void WiFiControl_Init(const char *ssid, const char *password) {
-  /* USART1 itself is brought up in main.c. We just hand off to the driver. */
-  HAL_Delay(1000); /* let the module finish its boot banner */
+/* Maximum number of WiFi connection attempts before giving up. */
+#define WIFI_MAX_RETRIES     3
+/* Boot delay: ESP8266 needs time after power-on to finish its boot banner.
+ * With low battery / voltage sag this can take longer than usual. */
+#define WIFI_BOOT_DELAY_MS   3000
 
-  if (!Wifi_Init()) {
-    printf("[WiFi] ESP8266 not responding (Wifi_Init failed).\n");
+void WiFiControl_Init(const char *ssid, const char *password) {
+  /*
+   * IMPORTANT: Stop all motors BEFORE attempting WiFi connection.
+   * The ESP8266 draws up to 300 mA peak during WiFi TX.  If motors are
+   * also running, total current can exceed what the battery / regulator
+   * can deliver (especially on a low-charge battery), causing a voltage
+   * sag that resets/browns-out the ESP8266 mid-handshake → timeout.
+   */
+  extern L298N_t motor_driver;
+  L298N_StopAll(&motor_driver);
+  printf("[WiFi] Motors stopped – reserving current for ESP8266.\n");
+
+  /* Give the ESP8266 plenty of boot time. */
+  HAL_Delay(WIFI_BOOT_DELAY_MS);
+
+  /* ---- AT handshake with retry -------------------------------------- */
+  bool esp_ok = false;
+  for (uint8_t attempt = 1; attempt <= WIFI_MAX_RETRIES; attempt++) {
+    printf("[WiFi] Init attempt %d/%d ...\n", attempt, WIFI_MAX_RETRIES);
+
+    if (Wifi_Init()) {
+      esp_ok = true;
+      break;
+    }
+    printf("[WiFi] AT handshake failed, retrying after reset ...\n");
+    /* Hard-reset the module and wait for reboot */
+    Wifi_Restart();
+    HAL_Delay(WIFI_BOOT_DELAY_MS);
+  }
+  if (!esp_ok) {
+    printf("[WiFi] ESP8266 not responding after %d attempts. "
+           "Check wiring/power!\n", WIFI_MAX_RETRIES);
     return;
   }
   printf("[WiFi] ESP8266 ready.\n");
 
+  /* ---- Set station mode --------------------------------------------- */
   if (!Wifi_SetMode(WifiMode_Station)) {
     printf("[WiFi] Failed to set WiFi mode.\n");
     return;
   }
 
-  printf("[WiFi] Connecting to %s ...\n", ssid);
-  if (!Wifi_Station_ConnectToAp((char *)ssid, (char *)password, NULL)) {
-    printf("[WiFi] WiFi connection failed.\n");
+  /* ---- Connect to AP with retry ------------------------------------- */
+  bool connected = false;
+  for (uint8_t attempt = 1; attempt <= WIFI_MAX_RETRIES; attempt++) {
+    printf("[WiFi] Connecting to \"%s\" (attempt %d/%d) ...\n",
+           ssid, attempt, WIFI_MAX_RETRIES);
+
+    if (Wifi_Station_ConnectToAp((char *)ssid, (char *)password, NULL)) {
+      connected = true;
+      break;
+    }
+    printf("[WiFi] Connection attempt %d failed.\n", attempt);
+    HAL_Delay(2000); /* cool-down between retries */
+  }
+  if (!connected) {
+    printf("[WiFi] WiFi connection FAILED after %d attempts.\n",
+           WIFI_MAX_RETRIES);
+    printf("[WiFi] Possible causes:\n");
+    printf("[WiFi]   - Battery too low (ESP8266 needs ~300mA peak)\n");
+    printf("[WiFi]   - SSID/password mismatch\n");
+    printf("[WiFi]   - Phone hotspot not active\n");
     return;
   }
-  printf("[WiFi] WiFi connected.\n");
+  printf("[WiFi] WiFi connected!\n");
+
+  /*
+   * Lower the ESP8266 RF TX power after connecting.
+   * Default is 82 (max).  Reducing it saves significant current and
+   * makes brownouts less likely once the connection is established.
+   * Value 40 ≈ half power — still good range for a car demo.
+   */
+  Wifi_SetRfPower(40);
 
   HAL_Delay(2000);
   Wifi_RxClear();
