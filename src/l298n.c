@@ -28,7 +28,14 @@ void L298N_Init(L298N_t *h_motor)
     
     GPIO_InitStruct.Pin = h_motor->motor_right.IN2_PIN;
     HAL_GPIO_Init(h_motor->motor_right.IN2_PORT, &GPIO_InitStruct);
-    
+
+    /* Configure EN pins as plain GPIO outputs (no PWM). */
+    GPIO_InitStruct.Pin = h_motor->motor_left.EN_PIN;
+    HAL_GPIO_Init(h_motor->motor_left.EN_PORT, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = h_motor->motor_right.EN_PIN;
+    HAL_GPIO_Init(h_motor->motor_right.EN_PORT, &GPIO_InitStruct);
+
     /* Stop all motors */
     L298N_StopAll(h_motor);
 }
@@ -100,6 +107,12 @@ void L298N_Move(L298N_t *h_motor, uint8_t motor, uint8_t direction, uint8_t spee
  */
 void L298N_Stop(L298N_t *h_motor, uint8_t motor)
 {
+    L298N_Motor_t *motor_ptr =
+        (motor == MOTOR_LEFT) ? &h_motor->motor_left : &h_motor->motor_right;
+
+    /* Coast: both inputs LOW. Works whether EN is PWM-driven or jumpered high. */
+    HAL_GPIO_WritePin(motor_ptr->IN1_PORT, motor_ptr->IN1_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(motor_ptr->IN2_PORT, motor_ptr->IN2_PIN, GPIO_PIN_RESET);
     L298N_SetSpeed(h_motor, motor, 0);
 }
 

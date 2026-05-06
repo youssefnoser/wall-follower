@@ -210,12 +210,43 @@ void GPIO_Init(void)
 /* ------------------------------------------------------------------ */
 void TIM_Init(void)
 {
+  static TIM_HandleTypeDef htim2;
   static TIM_HandleTypeDef htim3;
   static TIM_HandleTypeDef htim4;
   TIM_IC_InitTypeDef sConfigIC = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
 
+  __HAL_RCC_TIM2_CLK_ENABLE();
   __HAL_RCC_TIM3_CLK_ENABLE();
   __HAL_RCC_TIM4_CLK_ENABLE();
+  __HAL_RCC_AFIO_CLK_ENABLE();
+
+  /* PA0 = TIM2_CH1 (motor_left EN), PA1 = TIM2_CH2 (motor_right EN) */
+  GPIO_InitTypeDef gpio = {0};
+  gpio.Pin   = GPIO_PIN_0 | GPIO_PIN_1;
+  gpio.Mode  = GPIO_MODE_AF_PP;
+  gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &gpio);
+
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 64 - 1;     /* 64 MHz / 64 = 1 MHz tick */
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 1000 - 1;      /* 1 kHz PWM, matches PWM_Max=1000 */
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  HAL_TIM_PWM_Init(&htim2);
+
+  sConfigOC.OCMode     = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse      = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1);
+  HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2);
+
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
+
+  motor_driver.motor_left.htim  = &htim2;
+  motor_driver.motor_right.htim = &htim2;
 
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 64 - 1;
