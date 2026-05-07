@@ -1,4 +1,5 @@
 #include "ESP8266.h"
+#include "esp_ring.h"
 #include "dwt_stm32_delay.h"
 #include "hc_sr04.h"
 #include "ir_sensor.h"
@@ -13,10 +14,10 @@
  * the PID wall follower.  Leave it commented for autonomous wall following. */
 /* #define WIFI_CONTROL_MODE */
 #define ESP8266_DEBUG 1
-// #define WIFI_CONTROL_MODE
+#define WIFI_CONTROL_MODE
 // #define ESP8266_DEBUG 1
-#define WIFI_SSID "Youssef's A71"
-#define WIFI_PASSWORD "lol123a@@"
+#define WIFI_SSID "ZirnosSpace"
+#define WIFI_PASSWORD "12345678"
 
 /* Global Handlers */
 L298N_t motor_driver;
@@ -47,7 +48,8 @@ int main(void)
   DWT_Delay_Init();
   initialise_monitor_handles();
   USART1_UART_Init();
-  
+  esp_ring_init();
+
   GPIO_Init();
   TIM_Init();
   I2C_Init();

@@ -1,4 +1,5 @@
 #include "wifi_control.h"
+#include "esp_ring.h"
 #include "stm32f1xx_hal.h"
 #include <stdio.h>
 #include <string.h>
@@ -66,55 +67,24 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
   printf("[WiFi] sensors: %s", report);
 }
 
-/* Scan the driver's RX accumulator for async events:
- *   <id>,CONNECT
- *   <id>,CLOSED
- *   +IPD,<id>,<len>:<payload>
- *
- * The driver fills Wifi.RxBuffer byte-by-byte via HAL_UART_Receive_IT.
- * We only consume *complete* events (terminated by '\n' for CONNECT/CLOSED,
- * or once <len> payload bytes have arrived after ':' for +IPD); anything
- * partial is left in place for the next pass. After an event is handled
- * we shift the remaining bytes to the start of the buffer so we don't
- * lose data still in flight.
- */
-static void compact_rx_buffer(uint16_t consumed) {
-  __disable_irq();
-  if (consumed >= Wifi.RxIndex) {
-    Wifi.RxIndex = 0;
-    Wifi.RxBuffer[0] = 0;
-  } else {
-    uint16_t left = (uint16_t)(Wifi.RxIndex - consumed);
-    memmove(Wifi.RxBuffer, Wifi.RxBuffer + consumed, left);
-    Wifi.RxIndex = left;
-    memset(Wifi.RxBuffer + left, 0, _WIFI_RX_SIZE - left);
-  }
-  __enable_irq();
-}
+/* Parse one async event from the start of buf[0..len).
+ * Returns bytes consumed (> 0), or 0 if the event is incomplete. */
+static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
+                                       L298N_t *motors) {
+  if (len == 0) return 0;
 
-static void poll_async_events(L298N_t *motors) {
-  if (Wifi.RxIndex == 0) return;
-
-  /* Try to find the first +IPD or x,CONNECT/CLOSED token. */
-  char *buf = (char *)Wifi.RxBuffer;
-  uint16_t len = Wifi.RxIndex;
-  buf[len < _WIFI_RX_SIZE ? len : _WIFI_RX_SIZE - 1] = '\0';
-
-  /* +IPD,<id>,<n>:payload --------------------------------------------- */
-  char *ipd = strstr(buf, "+IPD,");
-  if (ipd) {
-    char *colon = strchr(ipd, ':');
-    if (!colon) return; /* header not complete yet */
+  /* +IPD,<id>,<n>:payload */
+  if (len >= 5 && strncmp(buf, "+IPD,", 5) == 0) {
+    const char *colon = strchr(buf, ':');
+    if (!colon) return 0; /* header still arriving */
     int id = 0, n = 0;
-    if (sscanf(ipd, "+IPD,%d,%d:", &id, &n) == 2 && n > 0) {
-      uint16_t header_len = (uint16_t)(colon - buf) + 1;
-      uint16_t need = header_len + (uint16_t)n;
-      if (need > Wifi.RxIndex) return; /* payload still arriving */
-
+    if (sscanf(buf, "+IPD,%d,%d:", &id, &n) == 2 && n > 0) {
+      uint16_t hdr = (uint16_t)(colon - buf) + 1;
+      if (hdr + (uint16_t)n > len) return 0; /* payload still arriving */
       char payload[64];
-      uint16_t cp = (uint16_t)n < sizeof(payload) - 1 ? (uint16_t)n
-                                                      : sizeof(payload) - 1;
-      memcpy(payload, buf + header_len, cp);
+      uint16_t cp = ((uint16_t)n < sizeof(payload) - 1)
+                        ? (uint16_t)n : (uint16_t)(sizeof(payload) - 1);
+      memcpy(payload, buf + hdr, cp);
       payload[cp] = '\0';
       while (cp > 0 && (payload[cp - 1] == '\r' || payload[cp - 1] == '\n'))
         payload[--cp] = '\0';
@@ -123,44 +93,53 @@ static void poll_async_events(L298N_t *motors) {
         execute_cmd(payload, motors);
         printf("[WiFi] cmd from link %d: %s\n", id, payload);
       }
-      compact_rx_buffer(need);
-      return;
+      return hdr + (uint16_t)n;
     }
-    /* header malformed but truncated → wait for more */
-    return;
+    return 5; /* malformed +IPD — skip past it */
   }
 
-  /* <id>,CONNECT / <id>,CLOSED ---------------------------------------- */
-  for (uint16_t i = 0; i + 8 <= len; i++) {
-    if (buf[i] >= '0' && buf[i] <= '4' && buf[i + 1] == ',') {
-      if (strncmp(buf + i + 2, "CONNECT", 7) == 0) {
-        char *eol = strchr(buf + i, '\n');
-        if (!eol) return; /* incomplete */
-        active_link = (int8_t)(buf[i] - '0');
-        printf("[WiFi] client %d connected.\n", active_link);
-        compact_rx_buffer((uint16_t)(eol - buf + 1));
-        return;
+  /* <id>,CONNECT\r\n  /  <id>,CLOSED\r\n */
+  if (buf[0] >= '0' && buf[0] <= '4' && len >= 2 && buf[1] == ',') {
+    if (len >= 9 && strncmp(buf + 2, "CONNECT", 7) == 0) {
+      const char *eol = strchr(buf, '\n');
+      if (!eol) return 0;
+      active_link = (int8_t)(buf[0] - '0');
+      printf("[WiFi] client %d connected.\n", active_link);
+      return (uint16_t)(eol - buf) + 1;
+    }
+    if (len >= 8 && strncmp(buf + 2, "CLOSED", 6) == 0) {
+      const char *eol = strchr(buf, '\n');
+      if (!eol) return 0;
+      int8_t cid = (int8_t)(buf[0] - '0');
+      if (active_link == cid) {
+        active_link = -1;
+        L298N_StopAll(motors);
+        printf("[WiFi] client disconnected. Motors stopped.\n");
       }
-      if (strncmp(buf + i + 2, "CLOSED", 6) == 0) {
-        char *eol = strchr(buf + i, '\n');
-        if (!eol) return;
-        int8_t id = (int8_t)(buf[i] - '0');
-        if (active_link == id) {
-          active_link = -1;
-          L298N_StopAll(motors);
-          printf("[WiFi] client disconnected. Motors stopped.\n");
-        }
-        compact_rx_buffer((uint16_t)(eol - buf + 1));
-        return;
-      }
+      return (uint16_t)(eol - buf) + 1;
     }
   }
 
-  /* Nothing useful — but if buffer is filling with garbage that has no
-   * recognised token and no in-flight +IPD header, drop it to avoid
-   * eventually overflowing _WIFI_RX_SIZE. */
-  if (Wifi.RxIndex > _WIFI_RX_SIZE / 2)
-    Wifi_RxClear();
+  return 1; /* unrecognised byte — skip it */
+}
+
+static void poll_async_events(L298N_t *motors) {
+  char snap[ESP_RING_SIZE];
+  uint16_t len = esp_ring_urc_peek((uint8_t *)snap, sizeof(snap) - 1);
+  if (len == 0) return;
+  snap[len] = '\0';
+
+  uint16_t pos = 0;
+  while (pos < len) {
+    uint16_t eaten = process_one_wifi_event(snap + pos, len - pos, motors);
+    if (eaten == 0) break;
+    pos += eaten;
+  }
+  if (pos > 0) esp_ring_urc_consume(pos);
+
+  /* Drop stale bytes if the URC cursor is falling far behind */
+  if (esp_ring_urc_available() > (3 * ESP_RING_SIZE) / 4)
+    esp_ring_urc_consume(esp_ring_urc_available());
 }
 
 /* -----------------------------------------------------------------------
@@ -174,6 +153,8 @@ static void poll_async_events(L298N_t *motors) {
 #define WIFI_BOOT_DELAY_MS   3000
 
 void WiFiControl_Init(const char *ssid, const char *password) {
+  esp_ring_init();
+
   /*
    * IMPORTANT: Stop all motors BEFORE attempting WiFi connection.
    * The ESP8266 draws up to 300 mA peak during WiFi TX.  If motors are

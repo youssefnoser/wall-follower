@@ -1,5 +1,6 @@
 #include "ESP8266.h"
 #include "ESP8266Config.h"
+#include "esp_ring.h"
 
 UART_HandleTypeDef	_WIFI_USART;
 Wifi_t				Wifi;
@@ -61,20 +62,27 @@ bool Wifi_WaitForString(uint32_t TimeOut_ms,uint8_t *result,uint8_t CountOfParam
 			arg[i] = va_arg (tag, char *);
 	va_end (tag);
 
-	for(uint32_t t=0 ; t<TimeOut_ms ; t+=20)
-	{
-		DWT_Delay_us(20000);
-		for(uint8_t	mx=0 ; mx<CountOfParameter ; mx++)
-		{
-			if(strstr((char*)Wifi.RxBuffer,arg[mx])!=NULL)
-			{
-				*result = mx+1;
-				return true;
-			}
-		}
-	}
-	// timeout
-	return false;
+    for (uint32_t t = 0; t < TimeOut_ms; t += 20)
+    {
+        /* Drain new bytes (arrived since last Wifi_RxClear) into RxBuffer. */
+        uint16_t room = (_WIFI_RX_SIZE - 1) - Wifi.RxIndex;
+        if (room > 0) {
+            uint16_t n = esp_ring_cmd_drain(Wifi.RxBuffer + Wifi.RxIndex, room);
+            Wifi.RxIndex += n;
+            Wifi.RxBuffer[Wifi.RxIndex] = '\0';
+        }
+
+        for (uint8_t mx = 0; mx < CountOfParameter; mx++)
+        {
+            if (strstr((char *)Wifi.RxBuffer, arg[mx]) != NULL)
+            {
+                *result = mx + 1;
+                return true;
+            }
+        }
+        DWT_Delay_us(20000);
+    }
+    return false;
 
 }
 //#########################################################################################################
@@ -176,9 +184,13 @@ void Wifi_RemoveChar(char *str, char garbage)
 //#########################################################################################################
 void Wifi_RxClear(void)
 {
-	memset(Wifi.RxBuffer,0,_WIFI_RX_SIZE);
-	Wifi.RxIndex=0;
-	HAL_UART_Receive_IT(&_WIFI_USART,&Wifi.usartBuff,1);
+    /* Only clears the AT-response scratch.  The ring is NOT wiped so async
+     * URC / +IPD bytes that arrived before this command are preserved for
+     * poll_async_events() to process later via the URC cursor. */
+    memset(Wifi.RxBuffer, 0, _WIFI_RX_SIZE);
+    Wifi.RxIndex = 0;
+    esp_ring_cmd_mark();
+    HAL_UART_Receive_IT(&_WIFI_USART, &Wifi.usartBuff, 1);
 }
 //#########################################################################################################
 void Wifi_TxClear(void)
@@ -188,10 +200,11 @@ void Wifi_TxClear(void)
 //#########################################################################################################
 void Wifi_RxCallBack(void)
 {
-	Wifi.RxBuffer[Wifi.RxIndex] = Wifi.usartBuff;
-	if(Wifi.RxIndex < _WIFI_RX_SIZE)
-	  Wifi.RxIndex++;
-	HAL_UART_Receive_IT(&_WIFI_USART,&Wifi.usartBuff,1);
+    /* Every received byte goes into the ring.  Wifi_WaitForString drains
+     * from the cmd cursor; poll_async_events drains from the urc cursor.
+     * Neither cursor is disturbed by the other. */
+    esp_ring_push(Wifi.usartBuff);
+    HAL_UART_Receive_IT(&_WIFI_USART, &Wifi.usartBuff, 1);
 }
 //#########################################################################################################
 //#########################################################################################################

@@ -81,7 +81,12 @@ endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────
 set(SOURCES
-    src/main.c
+    # Active main: pick exactly one.
+    #   src/main.c                     - wall-follower / WiFi remote-control
+    #   src/pwm_wifi_test_main.c       - manual TCP PWM tester
+    #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
+    src/wifi_stability_test_main.c
+    src/esp_ring.c
     src/l298n.c
     src/hc_sr04.c
     src/ir_sensor.c
