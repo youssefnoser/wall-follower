@@ -6,37 +6,26 @@
  */
 void L298N_Init(L298N_t *h_motor)
 {
-    /* Initialize left motor GPIO (IN1, IN2) */
     GPIO_InitTypeDef GPIO_InitStruct = {0};
-    
+
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
-    
-    /* Configure IN1 and IN2 pins as outputs */
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
+
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    
+
+    /* IN pins only — EN/PWM pins are owned by TIM_Init */
     GPIO_InitStruct.Pin = h_motor->motor_left.IN1_PIN;
     HAL_GPIO_Init(h_motor->motor_left.IN1_PORT, &GPIO_InitStruct);
-    
     GPIO_InitStruct.Pin = h_motor->motor_left.IN2_PIN;
     HAL_GPIO_Init(h_motor->motor_left.IN2_PORT, &GPIO_InitStruct);
-    
     GPIO_InitStruct.Pin = h_motor->motor_right.IN1_PIN;
     HAL_GPIO_Init(h_motor->motor_right.IN1_PORT, &GPIO_InitStruct);
-    
     GPIO_InitStruct.Pin = h_motor->motor_right.IN2_PIN;
     HAL_GPIO_Init(h_motor->motor_right.IN2_PORT, &GPIO_InitStruct);
 
-    /* Configure EN pins as plain GPIO outputs (no PWM). */
-    GPIO_InitStruct.Pin = h_motor->motor_left.EN_PIN;
-    HAL_GPIO_Init(h_motor->motor_left.EN_PORT, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = h_motor->motor_right.EN_PIN;
-    HAL_GPIO_Init(h_motor->motor_right.EN_PORT, &GPIO_InitStruct);
-
-    /* Stop all motors */
     L298N_StopAll(h_motor);
 }
 
@@ -71,17 +60,17 @@ void L298N_SetSpeed(L298N_t *h_motor, uint8_t motor, uint8_t speed)
  */
 void L298N_SetDirection(L298N_t *h_motor, uint8_t motor, uint8_t direction)
 {
-    L298N_Motor_t *motor_ptr;
-    
-    motor_ptr = (motor == MOTOR_LEFT) ? &h_motor->motor_left : &h_motor->motor_right;
-    
-    if (direction == MOTOR_FORWARD)
-    {
+    L298N_Motor_t *motor_ptr =
+        (motor == MOTOR_LEFT) ? &h_motor->motor_left : &h_motor->motor_right;
+
+    if (motor == MOTOR_RIGHT) {
+        direction = (direction == MOTOR_FORWARD) ? MOTOR_BACKWARD : MOTOR_FORWARD;
+    }
+
+    if (direction == MOTOR_FORWARD) {
         HAL_GPIO_WritePin(motor_ptr->IN1_PORT, motor_ptr->IN1_PIN, GPIO_PIN_SET);
         HAL_GPIO_WritePin(motor_ptr->IN2_PORT, motor_ptr->IN2_PIN, GPIO_PIN_RESET);
-    }
-    else if (direction == MOTOR_BACKWARD)
-    {
+    } else if (direction == MOTOR_BACKWARD) {
         HAL_GPIO_WritePin(motor_ptr->IN1_PORT, motor_ptr->IN1_PIN, GPIO_PIN_RESET);
         HAL_GPIO_WritePin(motor_ptr->IN2_PORT, motor_ptr->IN2_PIN, GPIO_PIN_SET);
     }
