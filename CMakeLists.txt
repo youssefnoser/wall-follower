@@ -79,23 +79,24 @@ if(NOT EXISTS "${LINKER_SCRIPT}")
         "It should have been generated alongside this CMakeLists.")
 endif()
 
-# ── Executable ────────────────────────────────────────────────────────────────
+# ── Executable ───────────────────────────────────────────────────────────────
 set(SOURCES
     # Active main: pick exactly one.
-    #   src/main.c                     - wall-follower / WiFi remote-control
-    #   src/pwm_wifi_test_main.c       - manual TCP PWM tester
+      src/simple_fsm_main.c          #- simple forward stop fsm
+    #   src/main.c                     #- wall-follower / WiFi remote-control
+    #   src/pwm_wifi_test_main.c       
     #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
-    src/wifi_stability_test_main.c
-    src/esp_ring.c
+    # src/wifi_stability_test_main.c
+    # src/esp_ring.c
     src/l298n.c
     src/hc_sr04.c
     src/ir_sensor.c
     src/mpu6050.c
-    src/ESP8266.c
+    # src/ESP8266.c
     src/dwt_stm32_delay.c
     src/wall_follower_fsm.c
     src/pid.c
-    src/wifi_control.c
+    # src/wifi_control.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )
@@ -108,6 +109,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
     -Wl,--print-memory-usage
     -Wl,-Map=${PROJECT_NAME}.map
     --specs=nano.specs
+    # --specs=nosys.specs
     --specs=rdimon.specs
     -u_printf_float
     -T${LINKER_SCRIPT}

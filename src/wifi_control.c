@@ -2,6 +2,7 @@
 #include "esp_ring.h"
 #include "stm32f1xx_hal.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define WIFI_CTRL_SPEED   70
@@ -11,33 +12,99 @@
 static int8_t   active_link      = -1;
 static uint32_t last_report_tick = 0;
 
+/* Cached signed duty (-100..100) per motor for the '?' query reply. */
+static int8_t   left_pwm_signed  = 0;
+static int8_t   right_pwm_signed = 0;
+
+static void send_ack(const char *msg) {
+  if (active_link < 0) return;
+  Wifi_TcpIp_SendDataTcp((uint8_t)active_link,
+                         (uint16_t)strlen(msg), (uint8_t *)msg);
+}
+
+/* Drive a single motor with a signed percentage.
+ *   pct >  0 → forward at |pct|%
+ *   pct <  0 → backward at |pct|%
+ *   pct == 0 → stop. */
+static void apply_motor(L298N_t *motors, uint8_t motor, int pct) {
+  if (pct >  100) pct =  100;
+  if (pct < -100) pct = -100;
+
+  if (motor == MOTOR_LEFT)  left_pwm_signed  = (int8_t)pct;
+  else                      right_pwm_signed = (int8_t)pct;
+
+  if (pct == 0) {
+    L298N_Stop(motors, motor);
+    return;
+  }
+  uint8_t dir   = (pct > 0) ? MOTOR_FORWARD : MOTOR_BACKWARD;
+  uint8_t speed = (uint8_t)(pct > 0 ? pct : -pct);
+  L298N_Move(motors, motor, dir, speed);
+}
+
 /* -----------------------------------------------------------------------
  * Private helpers
  * --------------------------------------------------------------------- */
 
 static void execute_cmd(const char *cmd, L298N_t *motors) {
   if (strncmp(cmd, "FORWARD", 7) == 0) {
-    L298N_Move(motors, MOTOR_LEFT,  MOTOR_FORWARD,  WIFI_CTRL_SPEED);
-    L298N_Move(motors, MOTOR_RIGHT, MOTOR_FORWARD,  WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_LEFT,   WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT,  WIFI_CTRL_SPEED);
     printf("[Motor] FORWARD speed=%d\n", WIFI_CTRL_SPEED);
-  } else if (strncmp(cmd, "BACK", 4) == 0) {
-    L298N_Move(motors, MOTOR_LEFT,  MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    L298N_Move(motors, MOTOR_RIGHT, MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    printf("[Motor] BACK speed=%d\n", WIFI_CTRL_SPEED);
-  } else if (strncmp(cmd, "LEFT", 4) == 0) {
-    L298N_Move(motors, MOTOR_LEFT,  MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    L298N_Move(motors, MOTOR_RIGHT, MOTOR_FORWARD,  WIFI_CTRL_SPEED);
-    printf("[Motor] LEFT speed=%d\n", WIFI_CTRL_SPEED);
-  } else if (strncmp(cmd, "RIGHT", 5) == 0) {
-    L298N_Move(motors, MOTOR_LEFT,  MOTOR_FORWARD,  WIFI_CTRL_SPEED);
-    L298N_Move(motors, MOTOR_RIGHT, MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    printf("[Motor] RIGHT speed=%d\n", WIFI_CTRL_SPEED);
-  } else if (strncmp(cmd, "STOP", 4) == 0) {
-    L298N_StopAll(motors);
-    printf("[Motor] STOP\n");
-  } else {
-    printf("[Motor] unknown cmd: %s\n", cmd);
+    return;
   }
+  if (strncmp(cmd, "BACK", 4) == 0) {
+    apply_motor(motors, MOTOR_LEFT,  -WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT, -WIFI_CTRL_SPEED);
+    printf("[Motor] BACK speed=%d\n", WIFI_CTRL_SPEED);
+    return;
+  }
+  if (strncmp(cmd, "LEFT", 4) == 0) {
+    apply_motor(motors, MOTOR_LEFT,  -WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT,  WIFI_CTRL_SPEED);
+    printf("[Motor] LEFT speed=%d\n", WIFI_CTRL_SPEED);
+    return;
+  }
+  if (strncmp(cmd, "RIGHT", 5) == 0) {
+    apply_motor(motors, MOTOR_LEFT,   WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT, -WIFI_CTRL_SPEED);
+    printf("[Motor] RIGHT speed=%d\n", WIFI_CTRL_SPEED);
+    return;
+  }
+  if (strncmp(cmd, "STOP", 4) == 0) {
+    L298N_StopAll(motors);
+    left_pwm_signed = right_pwm_signed = 0;
+    send_ack("OK STOP\r\n");
+    printf("[Motor] STOP\n");
+    return;
+  }
+
+  /* '?' — report current PWM duties back to client */
+  if (cmd[0] == '?' && (cmd[1] == '\0' || cmd[1] == ' ')) {
+    char rep[48];
+    int n = snprintf(rep, sizeof(rep), "L=%d R=%d\r\n",
+                     left_pwm_signed, right_pwm_signed);
+    if (n > 0) send_ack(rep);
+    return;
+  }
+
+  /* L <pct> | R <pct> | B <pct>  (signed percentage, -100..100) */
+  char which = cmd[0];
+  if ((which == 'L' || which == 'R' || which == 'B') &&
+      (cmd[1] == ' ' || cmd[1] == '\t')) {
+    int pct = atoi(cmd + 2);
+    if (which == 'L' || which == 'B') apply_motor(motors, MOTOR_LEFT,  pct);
+    if (which == 'R' || which == 'B') apply_motor(motors, MOTOR_RIGHT, pct);
+
+    char rep[48];
+    int n = snprintf(rep, sizeof(rep), "OK %c=%d\r\n", which, pct);
+    if (n > 0) send_ack(rep);
+    printf("[Motor] %c = %d\n", which, pct);
+    return;
+  }
+
+  send_ack("ERR\r\n");
+  printf("[Motor] unknown cmd: %s\n", cmd);
 }
 
 /* Trigger all 3 ultrasonics in sequence, read IMU, then push the report. */

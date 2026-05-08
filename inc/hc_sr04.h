@@ -4,7 +4,9 @@
 #include "stm32f1xx_hal.h"
 
 /* HC-SR04 Configuration */
-#define HC_SR04_TIMEOUT 30000  /* 30ms timeout */
+#define HC_SR04_TIMEOUT      30000  /* 30ms timeout */
+#define HC_SR04_MEDIAN_SIZE  5      /* median window (odd number) */
+#define HC_SR04_EMA_ALPHA    0.3f   /* EMA smoothing factor (0=heavy smooth, 1=no smooth) */
 
 typedef struct {
     GPIO_TypeDef *TRIG_PORT;
@@ -16,14 +18,22 @@ typedef struct {
     uint32_t first_capture;
     uint32_t second_capture;
     uint8_t is_first_capture;
-    float distance_cm;
+    float distance_cm;             /* raw distance */
+
+    /* Filter state */
+    float    median_buf[HC_SR04_MEDIAN_SIZE];
+    uint8_t  median_idx;
+    uint8_t  median_count;
+    float    ema_value;
+    float    filtered_cm;          /* median + EMA filtered output */
 } HC_SR04_t;
 
 /* Function Prototypes */
-void HC_SR04_Init(HC_SR04_t *hc_sr04);
-void HC_SR04_Trigger(HC_SR04_t *hc_sr04);
-void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04);
-float HC_SR04_GetDistance(HC_SR04_t *hc_sr04);
-void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04);
+void  HC_SR04_Init(HC_SR04_t *hc_sr04);
+void  HC_SR04_Trigger(HC_SR04_t *hc_sr04);
+void  HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04);
+float HC_SR04_GetDistance(HC_SR04_t *hc_sr04);      /* filtered */
+float HC_SR04_GetRawDistance(HC_SR04_t *hc_sr04);   /* unfiltered */
+void  HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04);
 
 #endif /* HC_SR04_H */

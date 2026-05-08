@@ -35,7 +35,6 @@ static int8_t  active_link    = -1;
 static int8_t  left_pwm_signed  = 0;  /* cached so '?' can report */
 static int8_t  right_pwm_signed = 0;
 
-extern void initialise_monitor_handles(void);
 void SystemClock_Config(void);
 void GPIO_Init(void);
 void TIM_Init(void);
@@ -252,13 +251,15 @@ static void wifi_bringup(void)
   printf("[Test] cmds: L <pct> | R <pct> | B <pct> | STOP | ?\n");
 }
 
+// extern void initialise_monitor_handles(void);
+
 /* ------------------------------------------------------------------ */
 int main(void)
 {
   HAL_Init();
   SystemClock_Config();
   DWT_Delay_Init();
-  initialise_monitor_handles();
+  // initialise_monitor_handles();
   USART1_UART_Init();
 
   GPIO_Init();

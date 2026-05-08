@@ -16,8 +16,8 @@
 #define ESP8266_DEBUG 1
 #define WIFI_CONTROL_MODE
 // #define ESP8266_DEBUG 1
-#define WIFI_SSID "ZirnosSpace"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "Yousef"
+#define WIFI_PASSWORD "20202020"
 
 /* Global Handlers */
 L298N_t motor_driver;
@@ -417,5 +417,27 @@ void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART1)
+  {
+    putchar((char)Wifi.usartBuff);
     Wifi_RxCallBack();
+  }
+}
+
+/* On any UART error (Overrun / Framing / Noise / Parity) the HAL aborts the
+ * pending RX-IT and won't re-arm it on its own.  Without this callback the
+ * STM goes deaf to the ESP8266 the first time an ORE fires — which happens
+ * easily at 115200 baud whenever a +IPD packet lands during a HAL_Delay or
+ * a busy printf.  Clear the error flags (read SR then DR sequence on F1)
+ * and re-arm single-byte reception so the ring keeps filling. */
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance != USART1) return;
+
+  __HAL_UART_CLEAR_OREFLAG(huart);
+  __HAL_UART_CLEAR_NEFLAG(huart);
+  __HAL_UART_CLEAR_FEFLAG(huart);
+  __HAL_UART_CLEAR_PEFLAG(huart);
+  (void)huart->Instance->DR;
+
+  HAL_UART_Receive_IT(huart, &Wifi.usartBuff, 1);
 }

@@ -1,4 +1,5 @@
 #include "hc_sr04.h"
+#include <string.h>
 
 /**
  * @brief Initialize HC-SR04 Ultrasonic Sensor
@@ -27,7 +28,14 @@ void HC_SR04_Init(HC_SR04_t *hc_sr04)
     /* Initialize variables */
     hc_sr04->is_first_capture = 1;
     hc_sr04->distance_cm = 0;
-    
+
+    /* Initialize filter state */
+    memset(hc_sr04->median_buf, 0, sizeof(hc_sr04->median_buf));
+    hc_sr04->median_idx   = 0;
+    hc_sr04->median_count = 0;
+    hc_sr04->ema_value    = 0.0f;
+    hc_sr04->filtered_cm  = 0.0f;
+
     /* Set TRIG to LOW */
     HAL_GPIO_WritePin(hc_sr04->TRIG_PORT, hc_sr04->TRIG_PIN, GPIO_PIN_RESET);
 }
@@ -57,6 +65,41 @@ void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04)
     
     HAL_TIM_IC_Start_IT(hc_sr04->htim, hc_sr04->tim_channel);
     HC_SR04_Trigger(hc_sr04);
+}
+
+/* Apply median-then-EMA filter to the latest raw sample. Called internally. */
+static void HC_SR04_UpdateFilter(HC_SR04_t *hc_sr04)
+{
+    /* --- Median stage: circular buffer of last MEDIAN_SIZE samples --- */
+    hc_sr04->median_buf[hc_sr04->median_idx] = hc_sr04->distance_cm;
+    hc_sr04->median_idx = (hc_sr04->median_idx + 1) % HC_SR04_MEDIAN_SIZE;
+    if (hc_sr04->median_count < HC_SR04_MEDIAN_SIZE)
+        hc_sr04->median_count++;
+
+    float tmp[HC_SR04_MEDIAN_SIZE];
+    uint8_t n = hc_sr04->median_count;
+    memcpy(tmp, hc_sr04->median_buf, n * sizeof(float));
+
+    /* Insertion sort on the n valid samples */
+    for (uint8_t i = 1; i < n; i++) {
+        float key = tmp[i];
+        int8_t j  = (int8_t)(i - 1);
+        while (j >= 0 && tmp[j] > key) {
+            tmp[j + 1] = tmp[j];
+            j--;
+        }
+        tmp[j + 1] = key;
+    }
+    float median = tmp[n / 2];
+
+    /* --- EMA stage --- */
+    if (hc_sr04->median_count == 1)
+        hc_sr04->ema_value = median;  /* bootstrap with first real sample */
+    else
+        hc_sr04->ema_value = HC_SR04_EMA_ALPHA * median
+                           + (1.0f - HC_SR04_EMA_ALPHA) * hc_sr04->ema_value;
+
+    hc_sr04->filtered_cm = hc_sr04->ema_value;
 }
 
 /**
@@ -92,15 +135,27 @@ void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
         
         /* Distance = (time in microseconds) / 58 */
         hc_sr04->distance_cm = distance_count / 58.0f;
+
+        HC_SR04_UpdateFilter(hc_sr04);
     }
 }
 
 /**
- * @brief Get measured distance in cm
+ * @brief Get filtered distance in cm (median + EMA)
  * @param hc_sr04: HC-SR04 handler
- * @return Distance in centimeters
+ * @return Filtered distance in centimeters
  */
 float HC_SR04_GetDistance(HC_SR04_t *hc_sr04)
+{
+    return hc_sr04->filtered_cm;
+}
+
+/**
+ * @brief Get raw (unfiltered) distance in cm
+ * @param hc_sr04: HC-SR04 handler
+ * @return Raw distance in centimeters
+ */
+float HC_SR04_GetRawDistance(HC_SR04_t *hc_sr04)
 {
     return hc_sr04->distance_cm;
 }
