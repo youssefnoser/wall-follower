@@ -24,6 +24,9 @@ int main(void) {
   printf("IMU initialization sequence starting...\n");
   MPU6050_Init(&imu);
 
+  uint8_t dlpf_config = MPU6050_DLPF_5HZ; /* Configurable DLPF value */
+  MPU6050_SetDLPF(&imu, dlpf_config);
+
   printf("Calibrating IMU... DO NOT MOVE THE DEVICE.\n");
   MPU6050_Calibrate(&imu, 1000); // Collect 1000 samples for around 2 seconds
   printf("Calibration complete! Z-Axis offset: %.2f\n", imu.gyro_z_offset);

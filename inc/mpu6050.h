@@ -7,6 +7,7 @@
 #define MPU6050_ADDR 0x68 /* Default address when AD0 = 0 */
 
 /* MPU6050 Registers */
+#define MPU6050_CONFIG 0x1A
 #define MPU6050_PWR_MGMT_1 0x6B
 #define MPU6050_ACCEL_XOUT_H 0x3B
 #define MPU6050_ACCEL_XOUT_L 0x3C
@@ -34,6 +35,15 @@
 #define GYRO_SCALE_1000 32.8f
 #define GYRO_SCALE_2000 16.4f
 
+/* DLPF Configurations */
+#define MPU6050_DLPF_260HZ 0x00
+#define MPU6050_DLPF_184HZ 0x01
+#define MPU6050_DLPF_94HZ 0x02
+#define MPU6050_DLPF_44HZ 0x03
+#define MPU6050_DLPF_21HZ 0x04
+#define MPU6050_DLPF_10HZ 0x05
+#define MPU6050_DLPF_5HZ 0x06
+
 typedef struct {
   float x;
   float y;
@@ -54,6 +64,7 @@ typedef struct {
 
 /* Function Prototypes */
 void MPU6050_Init(MPU6050_t *mpu6050);
+void MPU6050_SetDLPF(MPU6050_t *mpu6050, uint8_t dlpf_cfg);
 void MPU6050_Calibrate(MPU6050_t *mpu6050, uint16_t iterations);
 void MPU6050_UpdateAngle(MPU6050_t *mpu6050);
 HAL_StatusTypeDef MPU6050_WriteRegister(MPU6050_t *mpu6050, uint8_t reg,

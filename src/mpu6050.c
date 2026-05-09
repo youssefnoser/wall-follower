@@ -9,6 +9,7 @@ void MPU6050_Init(MPU6050_t *mpu6050) {
 
   /* Wake up the MPU6050 (clear sleep bit) */
   MPU6050_WriteRegister(mpu6050, MPU6050_PWR_MGMT_1, 0x00);
+  HAL_Delay(10);
 
   HAL_Delay(100);
 
@@ -26,6 +27,16 @@ void MPU6050_Init(MPU6050_t *mpu6050) {
   mpu6050->gyro_z_offset = 0;
   mpu6050->angle_z = 0;
   mpu6050->last_time = HAL_GetTick();
+}
+
+/**
+ * @brief Configure the Digital Low Pass Filter (DLPF)
+ * @param mpu6050: MPU6050 handler
+ * @param dlpf_cfg: DLPF config value (0-6)
+ */
+void MPU6050_SetDLPF(MPU6050_t *mpu6050, uint8_t dlpf_cfg) {
+  MPU6050_WriteRegister(mpu6050, MPU6050_CONFIG, dlpf_cfg);
+  HAL_Delay(10); /* Short delay for config to apply */
 }
 
 /**
