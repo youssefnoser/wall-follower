@@ -82,9 +82,10 @@ endif()
 # ── Executable ───────────────────────────────────────────────────────────────
 set(SOURCES
     # Active main: pick exactly one.
-      src/simple_fsm_main.c          #- simple forward stop fsm
+    #   src/simple_fsm_main.c          #- simple forward stop fsm
     #   src/main.c                     #- wall-follower / WiFi remote-control
-    #   src/pwm_wifi_test_main.c       
+    #   src/pwm_wifi_test_main.c
+      src/imu_main.c                 #- IMU (MPU6050) test
     #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
     # src/wifi_stability_test_main.c
     # src/esp_ring.c
