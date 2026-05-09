@@ -30,7 +30,7 @@ int main(void)
   HAL_Init();
   SystemClock_Config();
   DWT_Delay_Init();
-
+    
     initialise_monitor_handles();
 
   
@@ -49,6 +49,70 @@ int main(void)
 
   MPU6050_Init(&imu);
 
+  /* Zero biases by default */
+  imu.accel_bias.x = imu.accel_bias.y = imu.accel_bias.z = 0.0f;
+  imu.gyro_bias.x = imu.gyro_bias.y = imu.gyro_bias.z = 0.0f;
+
+  /* Initialize filter params and state */
+  imu.filt_alpha = 0.2f; /* weight for new samples (tunable) */
+  imu.filt_initialized = 0;
+  imu.accel_filt.x = imu.accel_filt.y = imu.accel_filt.z = 0.0f;
+  imu.gyro_filt.x = imu.gyro_filt.y = imu.gyro_filt.z = 0.0f;
+
+  /* If front IR sensor is covered at startup, enter IMU calibration mode.
+     Cover the front IR (IR_OBJECT_DETECTED) to trigger calibration. */
+  uint8_t do_calibration = 1;
+     if (do_calibration)
+  {
+    /* Simple calibration: average N samples while stationary */
+    #define IMU_CAL_SAMPLES 10000
+    Vector3_t a_sum = {0}, g_sum = {0};
+    for (int i = 0; i < IMU_CAL_SAMPLES; ++i)
+    {
+      MPU6050_ReadAll(&imu);
+      a_sum.x += imu.accel.x;
+      a_sum.y += imu.accel.y;
+      a_sum.z += imu.accel.z;
+      g_sum.x += imu.gyro.x;
+      g_sum.y += imu.gyro.y;
+      g_sum.z += imu.gyro.z;
+      HAL_Delay(10);
+    }
+    imu.accel_bias.x = a_sum.x / IMU_CAL_SAMPLES;
+    imu.accel_bias.y = a_sum.y / IMU_CAL_SAMPLES;
+    /* For Z, subtract expected +1g due to gravity when stationary and oriented so Z faces up */
+    imu.accel_bias.z = (a_sum.z / IMU_CAL_SAMPLES) - 1.0f;
+
+    imu.gyro_bias.x = g_sum.x / IMU_CAL_SAMPLES;
+    imu.gyro_bias.y = g_sum.y / IMU_CAL_SAMPLES;
+    imu.gyro_bias.z = g_sum.z / IMU_CAL_SAMPLES;
+
+    printf("IMU Calibration complete. Accel bias [%.3f, %.3f, %.3f] g  Gyro bias [%.3f, %.3f, %.3f] dps\r\n",
+           imu.accel_bias.x, imu.accel_bias.y, imu.accel_bias.z,
+           imu.gyro_bias.x, imu.gyro_bias.y, imu.gyro_bias.z);
+  }
+
+  /* Seed filters from current sensor state so filtering doesn't start from zero. */
+  MPU6050_ReadAll(&imu);
+  MPU6050_ReadTemperature(&imu);
+  imu.accel_filt.x = imu.accel.x - imu.accel_bias.x;
+  imu.accel_filt.y = imu.accel.y - imu.accel_bias.y;
+  imu.accel_filt.z = imu.accel.z - imu.accel_bias.z;
+  imu.gyro_filt.x = imu.gyro.x - imu.gyro_bias.x;
+  imu.gyro_filt.y = imu.gyro.y - imu.gyro_bias.y;
+  imu.gyro_filt.z = imu.gyro.z - imu.gyro_bias.z;
+  imu.filt_initialized = 1;
+
+  float target_dist_left = 50.0f; // Target distance from left wall (cm)
+  float Kp = 0.1f;
+  float Kd = 0.0f;
+  float prev_error = 0.0f;
+  int base_speed = 30;
+
+  /* IMU telemetry timing (ms) */
+  uint32_t imu_last = 0;
+  const uint32_t imu_period = 200; /* 200 ms -> 5 Hz */
+
   // printf("Simple FSM ready - Moving forward (Stand-alone).\n");
 
   while (1)
@@ -62,10 +126,15 @@ int main(void)
       led_last = now;
     }
 
-    /* ---- Measure Front Ultrasonic ------------------------------------- */
+    /* ---- Start Ultrasonic Measurements -------------------------------- */
+    /* Start measurements sequentially to avoid cross-talk, with reduced delays */
     HC_SR04_StartMeasurement(&ultrasonic_front);
-    HAL_Delay(50); // Wait for measurement to complete
+    HAL_Delay(40); /* Wait for front echo (max ~38ms for timeout) */
     float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
+
+    HC_SR04_StartMeasurement(&ultrasonic_left);
+    HAL_Delay(40); /* Wait for left echo */
+    float dist_left = HC_SR04_GetDistance(&ultrasonic_left);
 
     /* ---- Measure IR sensor -------------------------------------------- */
     /* IR_NO_OBJECT -> route clear, IR_OBJECT_DETECTED -> obstacle */
@@ -76,17 +145,78 @@ int main(void)
     {
         /* Obstacle detected: Stop */
         L298N_StopAll(&motor_driver);
-        printf("[Simple FSM] Obstacle Front: %.1f cm, IR_Safe: %d -> STOPPING\n", dist_front, ir_safe);
+        // printf("[Simple FSM] Obstacle Front: %.1f cm, IR_Safe: %d -> STOPPING\n", dist_front, ir_safe);
     } 
     else 
     {
-        /* No obstacle: Move Forward slowly */
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 40);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 40);
-        printf("[Simple FSM] Clear Front: %.1f cm, IR_Safe: %d -> MOVING FORWARD (40%%)\n", dist_front, ir_safe);
+        /* Calculate PD for Wall Following */
+        float error = target_dist_left - dist_left;
+        float derivative = error - prev_error;
+        float u = (Kp * error) + (Kd * derivative);
+        prev_error = error;
+        
+        int speed_l = base_speed + (int)u;
+        int speed_r = base_speed - (int)u;
+        
+        /* Constrain speeds */
+        if (speed_l > 100) speed_l = 100;
+        if (speed_l < 0) speed_l = 0;
+        if (speed_r > 100) speed_r = 100;
+        if (speed_r < 0) speed_r = 0;
+
+        /* No obstacle: Move Forward with differential speeds */
+        // L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, speed_l);
+        // L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, speed_r);
+        // printf("[Simple sFSM] Clear Front: %.1f cm, Left: %.1f cm -> MOVING (L:%d R:%d)   u: %1f   error: %1f  \n", dist_front, dist_left, speed_l, speed_r,u,error);
     }
 
-    HAL_Delay(50); /* loop delay */
+    /* IMU: periodic read and print (throttled) */
+    // if ((now - imu_last) >= imu_period)
+    // {
+            MPU6050_ReadAll(&imu);
+            MPU6050_ReadTemperature(&imu);
+
+            /* Apply calibration biases */
+            float ax = imu.accel.x - imu.accel_bias.x;
+            float ay = imu.accel.y - imu.accel_bias.y;
+            float az = imu.accel.z - imu.accel_bias.z;
+            float gx = imu.gyro.x - imu.gyro_bias.x;
+            float gy = imu.gyro.y - imu.gyro_bias.y;
+            float gz = imu.gyro.z - imu.gyro_bias.z;
+
+            /* Exponential Moving Average filter (EMA):
+               new_filt = alpha*sample + (1-alpha)*prev_filt
+               alpha is stored in imu.filt_alpha. */
+            if (!imu.filt_initialized)
+            {
+              imu.accel_filt.x = ax;
+              imu.accel_filt.y = ay;
+              imu.accel_filt.z = az;
+              imu.gyro_filt.x = gx;
+              imu.gyro_filt.y = gy;
+              imu.gyro_filt.z = gz;
+              imu.filt_initialized = 1;
+            }
+            else
+            {
+              float a = imu.filt_alpha;
+              float b = 1.0f - a;
+              imu.accel_filt.x = a * ax + b * imu.accel_filt.x;
+              imu.accel_filt.y = a * ay + b * imu.accel_filt.y;
+              imu.accel_filt.z = a * az + b * imu.accel_filt.z;
+              imu.gyro_filt.x = a * gx + b * imu.gyro_filt.x;
+              imu.gyro_filt.y = a * gy + b * imu.gyro_filt.y;
+              imu.gyro_filt.z = a * gz + b * imu.gyro_filt.z;
+            }
+
+            printf("IMU (filt): Accel [%.3f, %.3f, %.3f] g  Gyro [%.3f, %.3f, %.3f] dps  Temp: %.2f C\r\n",
+              imu.accel_filt.x, imu.accel_filt.y, imu.accel_filt.z,
+              imu.gyro_filt.x, imu.gyro_filt.y, imu.gyro_filt.z,
+              imu.temperature);
+      imu_last = now;
+    // }
+
+    /* We removed the 50ms loop delay here because the 80ms delay above is enough for the loop rate */
   }
 
   return 0;

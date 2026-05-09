@@ -1,0 +1,22 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "STM32 Debug",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "gdbPath": "gdb-multiarch",
+            "cwd": "${workspaceFolder}",
+            "configFiles": [
+                "openocd.cfg"
+            ],
+            "executable": "${workspaceFolder}/build/STM32_Motor_Control.elf",
+            "runToEntryPoint": "main",
+            "showDevDebugOutput": "raw",
+            "postLaunchCommands": [
+                "monitor arm semihosting enable"
+            ]
+        }
+    ]
+}
