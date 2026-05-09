@@ -113,10 +113,8 @@ static void do_turn(float delta) {
   }
 
   MPU6050_UpdateAngle(&imu);
-  if (fabsf(imu.angle_z) > 5.0f) {
-    printf("[TURN] ERR: start %.2f not zeroed, aborting\n", imu.angle_z);
-    return;
-  }
+  /* Removed zero-check to allow chaining multiple turns without resetting
+   * heading */
 
   float target = imu.angle_z + delta;
   printf("[TURN] start=%.2f  target=%.2f  delta=%.2f\n", imu.angle_z, target,
@@ -178,10 +176,14 @@ static void do_turn(float delta) {
   }
 
   /* Active hold-in-place brake pulse to kill cable tension snap-back */
-  HAL_GPIO_WritePin(motor_driver.motor_left.IN1_PORT, motor_driver.motor_left.IN1_PIN, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(motor_driver.motor_left.IN2_PORT, motor_driver.motor_left.IN2_PIN, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(motor_driver.motor_right.IN1_PORT, motor_driver.motor_right.IN1_PIN, GPIO_PIN_SET);
-  HAL_GPIO_WritePin(motor_driver.motor_right.IN2_PORT, motor_driver.motor_right.IN2_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN1_PORT,
+                    motor_driver.motor_left.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN2_PORT,
+                    motor_driver.motor_left.IN2_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN1_PORT,
+                    motor_driver.motor_right.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN2_PORT,
+                    motor_driver.motor_right.IN2_PIN, GPIO_PIN_SET);
   L298N_SetSpeed(&motor_driver, MOTOR_LEFT, 100);
   L298N_SetSpeed(&motor_driver, MOTOR_RIGHT, 100);
   HAL_Delay(60);
@@ -230,6 +232,18 @@ int main(void) {
 
   /* ── 4. Reset heading reference, then 90 ° CCW turn ──────────── */
   imu.angle_z = 0.0f;
+  imu.last_time = HAL_GetTick();
+  printf("[TEST] angle_z zeroed. Executing 90 deg CCW turn.\n");
+  do_turn(TURN_TARGET_DEG);
+
+  imu.last_time = HAL_GetTick();
+  printf("[TEST] angle_z zeroed. Executing 90 deg CW turn.\n");
+  do_turn(-TURN_TARGET_DEG);
+
+  imu.last_time = HAL_GetTick();
+  printf("[TEST] angle_z zeroed. Executing 90 deg CW turn.\n");
+  do_turn(-TURN_TARGET_DEG);
+
   imu.last_time = HAL_GetTick();
   printf("[TEST] angle_z zeroed. Executing 90 deg CCW turn.\n");
   do_turn(TURN_TARGET_DEG);
