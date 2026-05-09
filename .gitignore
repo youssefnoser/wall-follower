@@ -51,3 +51,6 @@ __pycache__/
 *.tmp
 *.bak
 *.orig
+
+!.vscode/launch.json
+!.vscode/tasks.json
