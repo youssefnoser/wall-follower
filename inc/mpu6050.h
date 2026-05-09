@@ -46,6 +46,15 @@ typedef struct {
     Vector3_t gyro;
     float temperature;
     uint8_t i2c_addr;
+    /* Calibration biases (in same units as accel/gyro fields) */
+    Vector3_t accel_bias;
+    Vector3_t gyro_bias;
+    /* Filtered outputs (post-bias) */
+    Vector3_t accel_filt;
+    Vector3_t gyro_filt;
+    /* Filter parameters */
+    float filt_alpha; /* EMA alpha: 0..1 (1 -> no filtering, 0 -> hold) */
+    uint8_t filt_initialized;
 } MPU6050_t;
 
 /* Function Prototypes */

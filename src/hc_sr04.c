@@ -28,6 +28,7 @@ void HC_SR04_Init(HC_SR04_t *hc_sr04)
     /* Initialize variables */
     hc_sr04->is_first_capture = 1;
     hc_sr04->distance_cm = 0;
+    hc_sr04->filter_enabled = 0; /* Default to enabled */
 
     /* Initialize filter state */
     memset(hc_sr04->median_buf, 0, sizeof(hc_sr04->median_buf));
@@ -141,13 +142,26 @@ void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
 }
 
 /**
- * @brief Get filtered distance in cm (median + EMA)
+ * @brief Get distance in cm
  * @param hc_sr04: HC-SR04 handler
- * @return Filtered distance in centimeters
+ * @return Distance in centimeters (filtered or raw based on flag)
  */
 float HC_SR04_GetDistance(HC_SR04_t *hc_sr04)
 {
-    return hc_sr04->filtered_cm;
+    if (hc_sr04->filter_enabled) {
+        return hc_sr04->filtered_cm;
+    }
+    return hc_sr04->distance_cm;
+}
+
+/**
+ * @brief Enable or disable filtering for this sensor
+ * @param hc_sr04: HC-SR04 handler
+ * @param enable: 1 to enable, 0 to disable
+ */
+void HC_SR04_SetFilterEnabled(HC_SR04_t *hc_sr04, uint8_t enable)
+{
+    hc_sr04->filter_enabled = enable;
 }
 
 /**
