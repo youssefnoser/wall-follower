@@ -123,10 +123,9 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
 
   char report[128];
   int n = snprintf(report, sizeof(report),
-                   "F=%.1f,L=%.1f,R=%.1f,AX=%.2f,AY=%.2f,AZ=%.2f,GX=%.2f,GY=%.2f,GZ=%.2f\r\n",
+                   "F=%.1f,L=%.1f,R=%.1f,PITCH=%.2f,ROLL=%.2f,YAW=%.2f\r\n",
                    df, dl, dr,
-                   imu->accel.x, imu->accel.y, imu->accel.z,
-                   imu->gyro.x,  imu->gyro.y,  imu->gyro.z);
+                   imu->pitch, imu->roll, imu->yaw);
   if (n < 0) return;
   if (n > (int)sizeof(report)) n = (int)sizeof(report);
 
@@ -320,7 +319,8 @@ void WiFiControl_Init(const char *ssid, const char *password) {
 
 void WiFiControl_Update(L298N_t *motors, HC_SR04_t *front, HC_SR04_t *left,
                         HC_SR04_t *right, MPU6050_t *imu) {
-  (void)imu; /* MPU6050_ReadAll skipped per existing convention */
+  /* Update angles frequently for the Complementary Filter */
+  MPU6050_UpdateAngles(imu);
 
   poll_async_events(motors);
 

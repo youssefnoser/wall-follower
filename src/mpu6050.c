@@ -33,6 +33,12 @@ void MPU6050_Init(MPU6050_t *mpu6050)
      * (DLPF enabled → gyro output = 1 kHz, not 8 kHz) */
     MPU6050_WriteRegister(mpu6050, MPU6050_SMPLRT_DIV, 0x00);
     
+    /* Set Gyro scale to +/- 1000 deg/s (2 << 3) to prevent clipping */
+    MPU6050_WriteRegister(mpu6050, MPU6050_GYRO_CONFIG, 0x10);
+    
+    /* Set Accel scale to +/- 2g (0 << 3) */
+    MPU6050_WriteRegister(mpu6050, MPU6050_ACCEL_CONFIG, 0x00);
+    
     /* Initialize data structure */
     mpu6050->accel.x = 0;
     mpu6050->accel.y = 0;
@@ -138,10 +144,11 @@ void MPU6050_SetDLPF(MPU6050_t *mpu6050, uint8_t dlpf_cfg)
  */
 void MPU6050_ReadAccelerometer(MPU6050_t *mpu6050)
 {
-    uint8_t data[6];
+    uint8_t data[6] = {0};
     int16_t accel_raw_x, accel_raw_y, accel_raw_z;
     
-    MPU6050_ReadMultiple(mpu6050, MPU6050_ACCEL_XOUT_H, data, 6);
+    if (MPU6050_ReadMultiple(mpu6050, MPU6050_ACCEL_XOUT_H, data, 6) != HAL_OK)
+        return; /* Keep previous value if read fails due to motor noise */
     
     accel_raw_x = (int16_t)((data[0] << 8) | data[1]);
     accel_raw_y = (int16_t)((data[2] << 8) | data[3]);
@@ -159,19 +166,20 @@ void MPU6050_ReadAccelerometer(MPU6050_t *mpu6050)
  */
 void MPU6050_ReadGyroscope(MPU6050_t *mpu6050)
 {
-    uint8_t data[6];
+    uint8_t data[6] = {0};
     int16_t gyro_raw_x, gyro_raw_y, gyro_raw_z;
     
-    MPU6050_ReadMultiple(mpu6050, MPU6050_GYRO_XOUT_H, data, 6);
+    if (MPU6050_ReadMultiple(mpu6050, MPU6050_GYRO_XOUT_H, data, 6) != HAL_OK)
+        return; /* Keep previous valid rate if read fails */
     
     gyro_raw_x = (int16_t)((data[0] << 8) | data[1]);
     gyro_raw_y = (int16_t)((data[2] << 8) | data[3]);
     gyro_raw_z = (int16_t)((data[4] << 8) | data[5]);
     
-    /* Convert to deg/s (using ±250 deg/s scale) then subtract calibration offset */
-    mpu6050->gyro.x = (gyro_raw_x / GYRO_SCALE_250) - mpu6050->gyro_offset.x;
-    mpu6050->gyro.y = (gyro_raw_y / GYRO_SCALE_250) - mpu6050->gyro_offset.y;
-    mpu6050->gyro.z = (gyro_raw_z / GYRO_SCALE_250) - mpu6050->gyro_offset.z;
+    /* Convert to deg/s (using ±1000 deg/s scale) then subtract calibration offset */
+    mpu6050->gyro.x = (gyro_raw_x / GYRO_SCALE_1000) - mpu6050->gyro_offset.x;
+    mpu6050->gyro.y = (gyro_raw_y / GYRO_SCALE_1000) - mpu6050->gyro_offset.y;
+    mpu6050->gyro.z = (gyro_raw_z / GYRO_SCALE_1000) - mpu6050->gyro_offset.z;
 }
 
 /**

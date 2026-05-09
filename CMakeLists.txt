@@ -85,7 +85,8 @@ set(SOURCES
     #   src/simple_fsm_main.c          #- simple forward stop fsm
     #   src/main.c                     #- wall-follower / WiFi remote-control
     #   src/pwm_wifi_test_main.c
-      src/imu_main.c                 #- IMU (MPU6050) test
+    #   src/imu_main.c                 #- IMU (MPU6050) test
+      src/auto_sequence_main.c       #- Autonomous route execution
     #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
     # src/wifi_stability_test_main.c
     # src/esp_ring.c
@@ -110,8 +111,8 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
     -Wl,--print-memory-usage
     -Wl,-Map=${PROJECT_NAME}.map
     --specs=nano.specs
-    # --specs=nosys.specs
-    --specs=rdimon.specs
+    --specs=nosys.specs
+    # --specs=rdimon.specs
     -u_printf_float
     -T${LINKER_SCRIPT}
 )
