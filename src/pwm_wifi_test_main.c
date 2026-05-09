@@ -30,11 +30,10 @@
 #define TURN_TARGET_DEG 90.0f /* how far to rotate                     */
 
 /* ── PD tunables ──────────────────────────────────────────────────── */
-#define TURN_KP 5.0f       /* % output per degree of remaining error        */
-#define TURN_KD 0.8f       /* % output per deg/s of gyro rate               */
+#define TURN_KP 9.0f       /* % output per degree of remaining error        */
+#define TURN_KD 2.0f       /* % output per deg/s of gyro rate               */
 #define TURN_MAX_SPEED 45  /* PWM ceiling (%)                               */
-#define TURN_MIN_SPEED 22  /* stiction floor — must move the car            */
-#define TURN_STOP_DEG 2.0f /* exit when error is smaller than this          */
+#define TURN_STOP_DEG 2.5f /* exit when error is smaller than this          */
 #define TURN_TIMEOUT_MS 6000
 
 /* ── globals ──────────────────────────────────────────────────────── */
@@ -131,8 +130,8 @@ static void do_turn(float delta) {
      * Negative output → CW   (auto-corrects overshoot)           */
     float output = TURN_KP * remaining - TURN_KD * rate_z;
 
-    /* Done when error is small regardless of remaining rate */
-    if (fabsf(remaining) <= TURN_STOP_DEG)
+    /* Done when error is small AND the car has stopped rotating */
+    if (fabsf(remaining) <= TURN_STOP_DEG && fabsf(rate_z) < 15.0f)
       break;
 
     if ((HAL_GetTick() - t_start) >= TURN_TIMEOUT_MS) {
@@ -140,10 +139,8 @@ static void do_turn(float delta) {
       break;
     }
 
-    /* Clamp magnitude; always enforce stiction floor until inside deadband */
+    /* Clamp maximum speed */
     float abs_out = fabsf(output);
-    if (abs_out < TURN_MIN_SPEED)
-      abs_out = TURN_MIN_SPEED;
     if (abs_out > TURN_MAX_SPEED)
       abs_out = TURN_MAX_SPEED;
 
