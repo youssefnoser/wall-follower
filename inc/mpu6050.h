@@ -7,7 +7,10 @@
 #define MPU6050_ADDR 0x68 /* Default address when AD0 = 0 */
 
 /* MPU6050 Registers */
+#define MPU6050_SMPLRT_DIV 0x19
 #define MPU6050_CONFIG 0x1A
+#define MPU6050_GYRO_CONFIG 0x1B
+#define MPU6050_ACCEL_CONFIG 0x1C
 #define MPU6050_PWR_MGMT_1 0x6B
 #define MPU6050_ACCEL_XOUT_H 0x3B
 #define MPU6050_ACCEL_XOUT_L 0x3C

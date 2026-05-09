@@ -1,5 +1,5 @@
 {
-    "cmake.sourceDirectory": "/home/ziad/Downloads/Embedded",
+    "cmake.sourceDirectory": "/home/exo/Embedded",
     "cmake.useCMakePresets": "always",
     "cortex-debug.gdbPath": "gdb-multiarch",
     "cortex-debug.armToolchainPath": "/usr/bin",

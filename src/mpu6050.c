@@ -1,4 +1,5 @@
 #include "mpu6050.h"
+#include <stdio.h>
 
 /**
  * @brief Initialize MPU6050 IMU
@@ -7,14 +8,26 @@
 void MPU6050_Init(MPU6050_t *mpu6050) {
   uint8_t data = 0;
 
-  /* Wake up the MPU6050 (clear sleep bit) */
-  MPU6050_WriteRegister(mpu6050, MPU6050_PWR_MGMT_1, 0x00);
-  HAL_Delay(10);
-
+  // 1. Full device reset
+  MPU6050_WriteRegister(mpu6050, MPU6050_PWR_MGMT_1, 0x80);
   HAL_Delay(100);
+
+  // 2. Wake up + PLL clock from X-axis gyro
+  MPU6050_WriteRegister(mpu6050, MPU6050_PWR_MGMT_1, 0x01);
+  HAL_Delay(10);
 
   /* Verify communication by reading WHO_AM_I register (0x75) */
   MPU6050_ReadRegister(mpu6050, 0x75, &data);
+
+  // 3. Gyro full scale ±2000 °/s (0x18)
+  MPU6050_WriteRegister(mpu6050, MPU6050_GYRO_CONFIG, 0x18);
+
+  // 4. Accel full scale ±2g (0x00)
+  MPU6050_WriteRegister(mpu6050, MPU6050_ACCEL_CONFIG, 0x00);
+
+  // 5. Sample rate = 1kHz / (1 + 4) = 200 Hz
+  MPU6050_WriteRegister(mpu6050, MPU6050_SMPLRT_DIV, 0x04);
+  HAL_Delay(10);
 
   /* Initialize data structure */
   mpu6050->accel.x = 0;
@@ -113,10 +126,10 @@ void MPU6050_ReadGyroscope(MPU6050_t *mpu6050) {
   gyro_raw_y = (int16_t)((data[2] << 8) | data[3]);
   gyro_raw_z = (int16_t)((data[4] << 8) | data[5]);
 
-  /* Convert to deg/s (using ±250 deg/s scale) */
-  mpu6050->gyro.x = gyro_raw_x / GYRO_SCALE_250;
-  mpu6050->gyro.y = gyro_raw_y / GYRO_SCALE_250;
-  mpu6050->gyro.z = gyro_raw_z / GYRO_SCALE_250;
+  /* Convert to deg/s (using ±2000 deg/s scale) */
+  mpu6050->gyro.x = gyro_raw_x / GYRO_SCALE_2000;
+  mpu6050->gyro.y = gyro_raw_y / GYRO_SCALE_2000;
+  mpu6050->gyro.z = gyro_raw_z / GYRO_SCALE_2000;
 }
 
 /**
@@ -171,6 +184,7 @@ void MPU6050_UpdateAngle(MPU6050_t *mpu6050) {
   uint32_t current_time = HAL_GetTick();
 
   // Read raw data
+  MPU6050_ReadAccelerometer(mpu6050);
   MPU6050_ReadGyroscope(mpu6050);
 
   // Convert time delta to seconds
@@ -179,10 +193,10 @@ void MPU6050_UpdateAngle(MPU6050_t *mpu6050) {
   // Apply calibration offset
   float rate_z = mpu6050->gyro.z - mpu6050->gyro_z_offset;
 
-  // Apply a sensible deadband filter to eliminate noise
-  if (rate_z > -0.5f && rate_z < 0.5f) {
-    rate_z = 0.0f;
-  }
+  // // Apply a sensible deadband filter to eliminate noise
+  // if (rate_z > -0.5f && rate_z < 0.5f) {
+  //   rate_z = 0.0f;
+  // }
 
   // Integrate angular velocity into absolute angle
   mpu6050->angle_z += (rate_z * dt);
