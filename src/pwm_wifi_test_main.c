@@ -27,10 +27,15 @@
 #define RAMP_STEP_PCT 10 /* increment: 10, 20, … 90               */
 #define RAMP_MAX_PCT 90
 
-#define TURN_TARGET_DEG 90.0f   /* how far to rotate                     */
-#define TURN_SPEED 35           /* % motor power during turn             */
-#define TURN_SLOWDOWN_DEG 15.0f /* ramp to half speed in last N degrees  */
-#define TURN_TIMEOUT_MS 6000    /* safety cut-off                        */
+#define TURN_TARGET_DEG 90.0f /* how far to rotate                     */
+
+/* ── PD tunables ──────────────────────────────────────────────────── */
+#define TURN_KP 5.0f       /* % output per degree of remaining error        */
+#define TURN_KD 0.8f       /* % output per deg/s of gyro rate               */
+#define TURN_MAX_SPEED 45  /* PWM ceiling (%)                               */
+#define TURN_MIN_SPEED 22  /* stiction floor — must move the car            */
+#define TURN_STOP_DEG 2.0f /* exit when error is smaller than this          */
+#define TURN_TIMEOUT_MS 6000
 
 /* ── globals ──────────────────────────────────────────────────────── */
 L298N_t motor_driver;
@@ -102,71 +107,67 @@ static void do_turn(float delta) {
     return;
   }
 
-  /* fresh angle snapshot */
   MPU6050_UpdateAngle(&imu);
-
   if (fabsf(imu.angle_z) > 5.0f) {
-    printf("[TURN] ERR: start angle %.2f too large (not zeroed?). Aborting.\n",
-           imu.angle_z);
+    printf("[TURN] ERR: start %.2f not zeroed, aborting\n", imu.angle_z);
     return;
   }
 
   float target = imu.angle_z + delta;
-
-  printf("[TURN] start=%.2f  target=%.2f  delta=%.2f deg\n", imu.angle_z,
-         target, delta);
+  printf("[TURN] start=%.2f  target=%.2f  delta=%.2f\n", imu.angle_z, target,
+         delta);
 
   uint32_t t_start = HAL_GetTick();
   uint32_t last_print = t_start;
 
   while (1) {
     MPU6050_UpdateAngle(&imu);
-    float current = imu.angle_z;
-    float remaining = target - current; /* signed */
 
-    /* done? (with 2.0 deg deadband to handle oscillation) */
-    bool done =
-        (delta > 0) ? (current >= target - 2.0f) : (current <= target + 2.0f);
-    if (done)
+    float remaining = target - imu.angle_z;        /* signed error  */
+    float rate_z = imu.gyro.z - imu.gyro_z_offset; /* signed deg/s  */
+
+    /* ── PD output ────────────────────────────────────────────── *
+     * Positive output → CCW  (left backward, right forward)      *
+     * Negative output → CW   (auto-corrects overshoot)           */
+    float output = TURN_KP * remaining - TURN_KD * rate_z;
+
+    /* Done when error is small regardless of remaining rate */
+    if (fabsf(remaining) <= TURN_STOP_DEG)
       break;
 
-    /* safety timeout */
     if ((HAL_GetTick() - t_start) >= TURN_TIMEOUT_MS) {
-      printf("[TURN] TIMEOUT — stopping\n");
+      printf("[TURN] TIMEOUT\n");
       break;
     }
 
-    /* adaptive speed: linear ramp-down in last TURN_SLOWDOWN_DEG */
-    float abs_rem = fabsf(remaining);
-    int spd = TURN_SPEED;
-    if (abs_rem < TURN_SLOWDOWN_DEG) {
-      spd = (int)(TURN_SPEED * (0.5f + 0.5f * (abs_rem / TURN_SLOWDOWN_DEG)));
-      if (spd < 20)
-        spd = 20; /* floor: must beat static friction */
-    }
+    /* Clamp magnitude; always enforce stiction floor until inside deadband */
+    float abs_out = fabsf(output);
+    if (abs_out < TURN_MIN_SPEED)
+      abs_out = TURN_MIN_SPEED;
+    if (abs_out > TURN_MAX_SPEED)
+      abs_out = TURN_MAX_SPEED;
 
-    /* CCW (positive delta): left backward, right forward */
-    if (delta > 0) {
-      apply_motor(MOTOR_LEFT, -spd);
-      apply_motor(MOTOR_RIGHT, spd);
-    } else {
-      apply_motor(MOTOR_LEFT, spd);
-      apply_motor(MOTOR_RIGHT, -spd);
-    }
+    /* Preserve sign: positive = CCW */
+    int spd = (output >= 0.0f) ? (int)abs_out : -(int)abs_out;
 
-    /* live print every 100 ms */
+    /* Unified drive — no direction if/else needed anymore */
+    apply_motor(MOTOR_LEFT, -spd);
+    apply_motor(MOTOR_RIGHT, spd);
+
     if (HAL_GetTick() - last_print >= 100) {
       last_print = HAL_GetTick();
-      printf("[TURN]  angle=%+7.2f°  remaining=%+6.2f°  spd=%d%%\n", current,
-             remaining, spd);
+      printf("[TURN]  angle=%+7.2f  remaining=%+6.2f  out=%.1f  rate=%.1f\n",
+             imu.angle_z, remaining, output, rate_z);
     }
   }
 
   L298N_StopAll(&motor_driver);
+  HAL_Delay(80); /* let chassis settle before final read */
+  MPU6050_UpdateAngle(&imu);
 
   float error = imu.angle_z - target;
-  printf("[TURN] done  final=%+.2f°  target=%+.2f°  error=%+.2f°\n",
-         imu.angle_z, target, error);
+  printf("[TURN] done  final=%+.2f  target=%+.2f  error=%+.2f\n", imu.angle_z,
+         target, error);
 }
 
 /* ================================================================== */

@@ -1,5 +1,6 @@
 #include "mpu6050.h"
 #include <stdio.h>
+#include <string.h>
 
 /**
  * @brief Initialize MPU6050 IMU
@@ -88,6 +89,7 @@ HAL_StatusTypeDef MPU6050_ReadRegister(MPU6050_t *mpu6050, uint8_t reg,
  */
 HAL_StatusTypeDef MPU6050_ReadMultiple(MPU6050_t *mpu6050, uint8_t reg,
                                        uint8_t *data, uint16_t size) {
+  memset(data, 0, size);
   return HAL_I2C_Mem_Read(mpu6050->hi2c, mpu6050->i2c_addr << 1, reg,
                           I2C_MEMADD_SIZE_8BIT, data, size, HAL_MAX_DELAY);
 }
