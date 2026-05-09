@@ -30,11 +30,17 @@
 #define TURN_TARGET_DEG 90.0f /* how far to rotate                     */
 
 /* ── PD tunables ──────────────────────────────────────────────────── */
-#define TURN_KP 9.0f       /* % output per degree of remaining error        */
-#define TURN_KD 2.0f       /* % output per deg/s of gyro rate               */
-#define TURN_MAX_SPEED 45  /* PWM ceiling (%)                               */
-#define TURN_STOP_DEG 2.5f /* exit when error is smaller than this          */
+#define TURN_KP 7.0f
+#define TURN_KD 0.7f
+#define TURN_MAX_SPEED 70
+#define TURN_MIN_SPEED 35
+#define TURN_STOP_DEG 2.5f
 #define TURN_TIMEOUT_MS 6000
+
+/* Approach zone: when remaining drops below this, we slow down hard */
+#define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
+#define TURN_APPROACH_MAX 28    /* PWM ceiling inside slow zone (%)   */
+#define TURN_APPROACH_MIN 22    /* stiction floor inside slow zone    */
 
 /* ── globals ──────────────────────────────────────────────────────── */
 L298N_t motor_driver;
@@ -139,12 +145,25 @@ static void do_turn(float delta) {
       break;
     }
 
-    /* Clamp maximum speed */
-    float abs_out = fabsf(output);
-    if (abs_out > TURN_MAX_SPEED)
-      abs_out = TURN_MAX_SPEED;
+    /* ── approach zone: coarsen nothing, just soften limits ─────── */
+    bool approaching = (fabsf(remaining) < TURN_APPROACH_DEG);
+    int max_spd = approaching ? TURN_APPROACH_MAX : TURN_MAX_SPEED;
+    int min_spd = approaching ? TURN_APPROACH_MIN : TURN_MIN_SPEED;
 
-    /* Preserve sign: positive = CCW */
+    float abs_out = fabsf(output);
+
+    /* Stiction floor — only when output agrees with error direction  */
+    if (abs_out < min_spd) {
+      bool pushing_toward = (output > 0.0f && remaining > 0.0f) ||
+                            (output < 0.0f && remaining < 0.0f);
+      if (pushing_toward)
+        abs_out = min_spd;
+    }
+
+    /* Speed ceiling */
+    if (abs_out > max_spd)
+      abs_out = max_spd;
+
     int spd = (output >= 0.0f) ? (int)abs_out : -(int)abs_out;
 
     /* Unified drive — no direction if/else needed anymore */
@@ -158,8 +177,17 @@ static void do_turn(float delta) {
     }
   }
 
+  /* Active hold-in-place brake pulse to kill cable tension snap-back */
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN1_PORT, motor_driver.motor_left.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN2_PORT, motor_driver.motor_left.IN2_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN1_PORT, motor_driver.motor_right.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN2_PORT, motor_driver.motor_right.IN2_PIN, GPIO_PIN_SET);
+  L298N_SetSpeed(&motor_driver, MOTOR_LEFT, 100);
+  L298N_SetSpeed(&motor_driver, MOTOR_RIGHT, 100);
+  HAL_Delay(60);
+
   L298N_StopAll(&motor_driver);
-  HAL_Delay(80); /* let chassis settle before final read */
+  HAL_Delay(60); /* let chassis settle before final read */
   MPU6050_UpdateAngle(&imu);
 
   float error = imu.angle_z - target;
