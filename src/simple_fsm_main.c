@@ -14,14 +14,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Left-wall follower tuning --------------------------------------- */
-#define LEFT_WALL_SETPOINT  15.0f  /* cm – initial target distance (runtime-tunable) */
-#define LEFT_WALL_KP         2.0f
-#define LEFT_WALL_KI         0.0f
-#define LEFT_WALL_KD         0.5f
-#define LEFT_BASE_SPEED        35  /* 0-100 PWM base duty                  */
-#define LEFT_EMA_ALPHA        0.3f /* ultrasonic EMA filter weight          */
-#define FRONT_OBSTACLE_CM    20.0f /* cm – front obstacle stop threshold    */
+/* ---- Corridor-centering tuning --------------------------------------- */
+#define CENTER_KP            1.5f  /* proportional gain (negate if car goes wrong way) */
+#define CENTER_KI            0.0f
+#define CENTER_KD            0.8f
+#define CENTER_MARGIN_CM     2.5f  /* dead-band: ignore error smaller than this (cm)   */
+#define BASE_SPEED            35   /* 0-100 PWM base duty                              */
+#define EMA_ALPHA            0.3f  /* ultrasonic EMA filter weight                     */
+#define FRONT_OBSTACLE_CM   20.0f  /* cm – front obstacle stop threshold               */
 
 /* ---- WiFi / PID-tuner ------------------------------------------------ */
 #define WIFI_SSID     "Yousef"
@@ -45,18 +45,16 @@ void ADC_Init(void);
 void USART1_UART_Init(void);
 
 /* -----------------------------------------------------------------------
- * WiFi PID tuner
+ * WiFi corridor-centering tuner
  *
- * Accepted TCP commands (send from phone/PC to port 1234):
- *   PID=Kp,Ki,Kd   – update all three gains and reset integral
- *   SP=15.0         – change wall setpoint distance (cm)
- *   GET             – reply with current Kp, Ki, Kd, SP
- *
- * The MCU replies with a one-line ACK so you can confirm the change.
+ * TCP commands (port 1234):
+ *   PID=Kp,Ki,Kd   – update gains and reset integral
+ *   MB=2.5          – set dead-band margin (cm); no correction inside this window
+ *   GET             – reply with current KP, KI, KD, MB
  * --------------------------------------------------------------------- */
 static int8_t wifi_link = -1;
 
-static void pid_poll_wifi(PID_t *pid, float *setpoint) {
+static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
   char snap[128];
   uint16_t len = esp_ring_urc_peek((uint8_t *)snap, sizeof(snap) - 1);
   if (len == 0) return;
@@ -86,31 +84,35 @@ static void pid_poll_wifi(PID_t *pid, float *setpoint) {
 
         if (strncmp(payload, "PID=", 4) == 0) {
           /* PID=Kp,Ki,Kd */
-          char *p = payload + 4;
-          char *end;
+          char *p = payload + 4, *end;
           float kp = strtof(p, &end);
           if (*end == ',') {
             float ki = strtof(end + 1, &end);
             if (*end == ',') {
               float kd = strtof(end + 1, NULL);
-              PID_Init(pid, kp, ki, kd, -LEFT_BASE_SPEED, LEFT_BASE_SPEED);
+              PID_Init(pid, kp, ki, kd, -BASE_SPEED, BASE_SPEED);
               PID_Reset(pid);
               alen = snprintf(ack, sizeof(ack),
-                              "OK PID KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
-              printf("[PID tuner] KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
+                              "OK KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
+              printf("[tuner] KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
             }
           }
-        } else if (strncmp(payload, "SP=", 3) == 0) {
-          /* SP=<cm>  – change wall setpoint */
-          float sp = strtof(payload + 3, NULL);
-          *setpoint = sp;
-          alen = snprintf(ack, sizeof(ack), "OK SP=%.1f\r\n", sp);
-          printf("[PID tuner] Setpoint=%.1f cm\r\n", sp);
+        } else if (strncmp(payload, "MB=", 3) == 0) {
+          /* MB=<cm>  – dead-band margin */
+          float mb = strtof(payload + 3, NULL);
+          if (mb >= 0.0f) *margin = mb;
+          alen = snprintf(ack, sizeof(ack), "OK MB=%.2f\r\n", *margin);
+          printf("[tuner] Margin=%.2f cm\r\n", *margin);
         } else if (strncmp(payload, "GET", 3) == 0) {
-          /* GET – query current params */
           alen = snprintf(ack, sizeof(ack),
-                          "KP=%.3f KI=%.3f KD=%.3f SP=%.1f\r\n",
-                          pid->Kp, pid->Ki, pid->Kd, *setpoint);
+                          "KP=%.3f KI=%.3f KD=%.3f MB=%.2f RUN=%d\r\n",
+                          pid->Kp, pid->Ki, pid->Kd, *margin, (int)*running);
+        } else if (strncmp(payload, "STOP", 4) == 0) {
+          *running = 0;
+          alen = snprintf(ack, sizeof(ack), "OK STOPPED\r\n");
+        } else if (strncmp(payload, "GO", 2) == 0) {
+          *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK RUNNING\r\n");
         }
 
         if (alen > 0)
@@ -157,15 +159,15 @@ int main(void)
   USART1_UART_Init();
   WiFiControl_Init(WIFI_SSID, WIFI_PASSWORD);
 
-  /* Left-wall PID controller (gains and setpoint tunable via WiFi at runtime) */
-  PID_t pid_left_wall;
+  /* Corridor-centering PID (all params tunable via WiFi at runtime) */
+  PID_t pid_center;
+  PID_Init(&pid_center, CENTER_KP, CENTER_KI, CENTER_KD, -BASE_SPEED, BASE_SPEED);
+  float margin = CENTER_MARGIN_CM; /* dead-band, runtime-mutable via "MB=" cmd */
 
-  PID_Init(&pid_left_wall, LEFT_WALL_KP, LEFT_WALL_KI, LEFT_WALL_KD,
-           -LEFT_BASE_SPEED, LEFT_BASE_SPEED);
-  float wall_setpoint = LEFT_WALL_SETPOINT; /* runtime-mutable via "SP=" cmd */
-
-  float filt_left = 100.0f; /* EMA state, seeded high so first read converges */
+  float filt_left  = 100.0f; /* EMA states seeded high so first reads converge */
+  float filt_right = 100.0f;
   uint32_t last_pid_tick = HAL_GetTick();
+  uint8_t running = 1; /* STOP/GO command toggles this */
 
   // printf("Simple FSM ready - Moving forward (Stand-alone).\n");
 
@@ -187,42 +189,56 @@ int main(void)
     float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
 
     HC_SR04_StartMeasurement(&ultrasonic_left);
-    HAL_Delay(40); /* Wait for left echo */
-    float dist_left = HC_SR04_GetDistance(&ultrasonic_left);
+    HAL_Delay(40);
+    float dist_left  = HC_SR04_GetDistance(&ultrasonic_left);
 
-    /* ---- Measure IR sensor -------------------------------------------- */
-    /* IR_NO_OBJECT -> route clear, IR_OBJECT_DETECTED -> obstacle */
+    HC_SR04_StartMeasurement(&ultrasonic_right);
+    HAL_Delay(40);
+    float dist_right = HC_SR04_GetDistance(&ultrasonic_right);
+
+    /* ---- IR sensor ---------------------------------------------------- */
     uint8_t ir_safe = (IR_Sensor_GetState(&ir_sensor_front) == IR_NO_OBJECT);
     ir_safe = 1; /* For testing without IR sensor */
-    /* ---- Poll WiFi for PID tuning commands ---------------------------- */
-    pid_poll_wifi(&pid_left_wall, &wall_setpoint);
 
-    /* ---- EMA filter on left ultrasonic -------------------------------- */
-    filt_left = LEFT_EMA_ALPHA * dist_left + (1.0f - LEFT_EMA_ALPHA) * filt_left;
+    /* ---- Poll WiFi for tuning commands -------------------------------- */
+    pid_poll_wifi(&pid_center, &margin, &running);
+
+    /* ---- EMA filters -------------------------------------------------- */
+    filt_left  = EMA_ALPHA * dist_left  + (1.0f - EMA_ALPHA) * filt_left;
+    filt_right = EMA_ALPHA * dist_right + (1.0f - EMA_ALPHA) * filt_right;
 
     /* ---- dt for PID --------------------------------------------------- */
     uint32_t pid_now = HAL_GetTick();
-    float dt = (float)(pid_now - last_pid_tick) * 0.001f; /* ms → s */
+    float dt = (float)(pid_now - last_pid_tick) * 0.001f;
     last_pid_tick = pid_now;
 
-    /* ---- Logic: Move forward unless obstacle is detected -------------- */
-    if (dist_front < FRONT_OBSTACLE_CM || !ir_safe)
+    /* ---- Centering logic ---------------------------------------------- */
+    if (!running)
     {
-        /* Obstacle detected: stop and reset integral to avoid windup */
         L298N_StopAll(&motor_driver);
-        PID_Reset(&pid_left_wall);
-        printf("[FSM] STOP  | Front: %.1f cm  IR: %d\r\n", dist_front, ir_safe);
+    }
+    else if (dist_front < FRONT_OBSTACLE_CM || !ir_safe)
+    {
+        L298N_StopAll(&motor_driver);
+        PID_Reset(&pid_center);
+        printf("[FSM] STOP  | F:%.1f L:%.1f R:%.1f\r\n",
+               dist_front, filt_left, filt_right);
     }
     else
     {
-        /* Left-wall PID: error = setpoint - measurement
-         *   positive → too far from wall → steer left (right faster)
-         *   negative → too close to wall → steer right (left faster)  */
-        float pid_out = PID_Compute(&pid_left_wall,
-                                    wall_setpoint, filt_left, dt);
+        /* Centering error: positive → robot is left of center (right wall farther)
+         *                  negative → robot is right of center (left wall farther)
+         * Dead-band: suppress small errors to avoid jitter near center.
+         * PID output >0 → left wheel faster → steers right (toward center when left of center).
+         * Negate Kp via WiFi if car goes the wrong way. */
+        float wall_error = filt_right - filt_left;
+        if (wall_error < 0.0f && wall_error > -margin) wall_error = 0.0f;
+        if (wall_error > 0.0f && wall_error <  margin) wall_error = 0.0f;
 
-        int speed_l = LEFT_BASE_SPEED - (int)pid_out;
-        int speed_r = LEFT_BASE_SPEED + (int)pid_out;
+        float pid_out = PID_Compute(&pid_center, 0.0f, -wall_error, dt);
+
+        int speed_l = BASE_SPEED + (int)pid_out;
+        int speed_r = BASE_SPEED - (int)pid_out;
 
         if (speed_l > 100) speed_l = 100;
         if (speed_l < 0)   speed_l = 0;
@@ -232,11 +248,11 @@ int main(void)
         L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_FORWARD, (uint8_t)speed_l);
         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, (uint8_t)speed_r);
 
-        printf("[FSM] FWD   | Front: %.1f  Left(raw): %.1f  Left(filt): %.1f  PID: %.2f  L:%d R:%d\r\n",
-               dist_front, dist_left, filt_left, pid_out, speed_l, speed_r);
+        printf("[FSM] FWD | L:%.1f R:%.1f Err:%.1f PID:%.2f L:%d R:%d MB:%.1f\r\n",
+               filt_left, filt_right, wall_error, pid_out, speed_l, speed_r, margin);
     }
 
-    /* Loop rate is ~80ms from the two 40ms sensor delays above */
+    /* Loop rate ~120ms from three 40ms sensor delays */
   }
 
   return 0;
