@@ -82,7 +82,7 @@ endif()
 # ── Executable ────────────────────────────────────────────────────────────────
 set(SOURCES
     # Active main: pick exactly one.
-    src/pwm_wifi_test_main.c
+    src/main.c
     # src/imu_turn_test_main.c
     src/esp_ring.c
     src/l298n.c
@@ -94,8 +94,7 @@ set(SOURCES
     src/wall_follower_fsm.c
     src/pid.c
     src/wifi_control.c
-    src/flash_logger.c
-    src/syscalls.c
+
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )
@@ -108,7 +107,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
     -Wl,--print-memory-usage
     -Wl,-Map=${PROJECT_NAME}.map
     --specs=nano.specs
-    --specs=nosys.specs
+    --specs=rdimon.specs
     -u_printf_float
     -T${LINKER_SCRIPT}
 )

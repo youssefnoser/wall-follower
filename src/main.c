@@ -1,6 +1,6 @@
 #include "ESP8266.h"
-#include "esp_ring.h"
 #include "dwt_stm32_delay.h"
+#include "esp_ring.h"
 #include "hc_sr04.h"
 #include "ir_sensor.h"
 #include "l298n.h"
@@ -14,10 +14,10 @@
  * the PID wall follower.  Leave it commented for autonomous wall following. */
 /* #define WIFI_CONTROL_MODE */
 #define ESP8266_DEBUG 1
-#define WIFI_CONTROL_MODE
+// #define WIFI_CONTROL_MODE
 // #define ESP8266_DEBUG 1
-#define WIFI_SSID "ZirnosSpace"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "Yousef"
+#define WIFI_PASSWORD "20202020"
 
 /* Global Handlers */
 L298N_t motor_driver;
@@ -47,8 +47,8 @@ int main(void)
   SystemClock_Config();
   DWT_Delay_Init();
   initialise_monitor_handles();
-  USART1_UART_Init();
-  esp_ring_init();
+  // USART1_UART_Init();
+  // esp_ring_init();
 
   GPIO_Init();
   TIM_Init();
@@ -63,7 +63,7 @@ int main(void)
 
   L298N_Init(&motor_driver);
 
-  MPU6050_Init(&imu);
+  // MPU6050_Init(&imu);
 
 #ifdef WIFI_CONTROL_MODE
 
@@ -117,19 +117,17 @@ int main(void)
     MPU6050_ReadAll(&imu);
 
     /* ---- FSM step ----------------------------------------------------- */
-    WallFollower_Update(&fsm, dist_front, dist_left, dist_right, ir_safe,
-                        imu.gyro.z); /* gyro Z in degrees/second */
+    // WallFollower_Update(&fsm, dist_front, dist_left, dist_right, ir_safe,
+    //                     imu.gyro.z); /* gyro Z in degrees/second */
 
     /* ---- Debug print -------------------------------------------------- */
     printf("[FSM] %-13s | Raw F:%5.1f L:%5.1f R:%5.1f | "
            "Filt F:%5.1f L:%5.1f R:%5.1f cm | IR:%d | "
            "Yaw:%7.1f->%7.1f | "
            "WallPID:%6.1f | Retries L:%d R:%d\n",
-           FSM_StateName(fsm.state),
-           dist_front, dist_left, dist_right,
-           fsm.filt_front, fsm.filt_left, fsm.filt_right,
-           ir_safe,
-           fsm.yaw, fsm.yaw_target,
+           FSM_StateName(fsm.state), dist_front, dist_left, dist_right,
+           fsm.filt_front, fsm.filt_left, fsm.filt_right, ir_safe, fsm.yaw,
+           fsm.yaw_target,
            fsm.pid_wall.prev_error * fsm.pid_wall.Kp, /* approx P-term */
            fsm.retry_left, fsm.retry_right);
 
@@ -233,20 +231,20 @@ void TIM_Init(void)
 
   /* PA0 = TIM2_CH1 (motor_left EN), PA1 = TIM2_CH2 (motor_right EN) */
   GPIO_InitTypeDef gpio = {0};
-  gpio.Pin   = GPIO_PIN_0 | GPIO_PIN_1;
-  gpio.Mode  = GPIO_MODE_AF_PP;
+  gpio.Pin = GPIO_PIN_0 | GPIO_PIN_1;
+  gpio.Mode = GPIO_MODE_AF_PP;
   gpio.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &gpio);
 
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 64 - 1;     /* 64 MHz / 64 = 1 MHz tick */
+  htim2.Init.Prescaler = 64 - 1; /* 64 MHz / 64 = 1 MHz tick */
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 1000 - 1;      /* 1 kHz PWM, matches PWM_Max=1000 */
+  htim2.Init.Period = 1000 - 1; /* 1 kHz PWM, matches PWM_Max=1000 */
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   HAL_TIM_PWM_Init(&htim2);
 
-  sConfigOC.OCMode     = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse      = 0;
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1);
@@ -255,7 +253,7 @@ void TIM_Init(void)
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
 
-  motor_driver.motor_left.htim  = &htim2;
+  motor_driver.motor_left.htim = &htim2;
   motor_driver.motor_right.htim = &htim2;
 
   htim3.Instance = TIM3;
@@ -409,7 +407,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 /* ------------------------------------------------------------------ */
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
 void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }
-void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
+// void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
 
 /* HAL invokes this once HAL_UART_Receive_IT completes a single byte.
  * The driver's Wifi_RxCallBack pushes that byte into Wifi.RxBuffer and
