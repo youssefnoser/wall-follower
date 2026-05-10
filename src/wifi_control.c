@@ -5,21 +5,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define WIFI_CTRL_SPEED   70
-#define SENSOR_REPORT_MS  500
-#define WIFI_TCP_PORT     1234
+#define WIFI_CTRL_SPEED 70
+#define SENSOR_REPORT_MS 500
+#define WIFI_TCP_PORT 1234
 
-static int8_t   active_link      = -1;
+static int8_t active_link = -1;
 static uint32_t last_report_tick = 0;
 
 /* Cached signed duty (-100..100) per motor for the '?' query reply. */
-static int8_t   left_pwm_signed  = 0;
-static int8_t   right_pwm_signed = 0;
+static int8_t left_pwm_signed = 0;
+static int8_t right_pwm_signed = 0;
 
 static void send_ack(const char *msg) {
-  if (active_link < 0) return;
-  Wifi_TcpIp_SendDataTcp((uint8_t)active_link,
-                         (uint16_t)strlen(msg), (uint8_t *)msg);
+  if (active_link < 0)
+    return;
+  Wifi_TcpIp_SendDataTcp((uint8_t)active_link, (uint16_t)strlen(msg),
+                         (uint8_t *)msg);
 }
 
 /* Drive a single motor with a signed percentage.
@@ -27,17 +28,21 @@ static void send_ack(const char *msg) {
  *   pct <  0 → backward at |pct|%
  *   pct == 0 → stop. */
 static void apply_motor(L298N_t *motors, uint8_t motor, int pct) {
-  if (pct >  100) pct =  100;
-  if (pct < -100) pct = -100;
+  if (pct > 100)
+    pct = 100;
+  if (pct < -100)
+    pct = -100;
 
-  if (motor == MOTOR_LEFT)  left_pwm_signed  = (int8_t)pct;
-  else                      right_pwm_signed = (int8_t)pct;
+  if (motor == MOTOR_LEFT)
+    left_pwm_signed = (int8_t)pct;
+  else
+    right_pwm_signed = (int8_t)pct;
 
   if (pct == 0) {
     L298N_Stop(motors, motor);
     return;
   }
-  uint8_t dir   = (pct > 0) ? MOTOR_FORWARD : MOTOR_BACKWARD;
+  uint8_t dir = (pct > 0) ? MOTOR_FORWARD : MOTOR_BACKWARD;
   uint8_t speed = (uint8_t)(pct > 0 ? pct : -pct);
   L298N_Move(motors, motor, dir, speed);
 }
@@ -48,25 +53,25 @@ static void apply_motor(L298N_t *motors, uint8_t motor, int pct) {
 
 static void execute_cmd(const char *cmd, L298N_t *motors) {
   if (strncmp(cmd, "FORWARD", 7) == 0) {
-    apply_motor(motors, MOTOR_LEFT,   WIFI_CTRL_SPEED);
-    apply_motor(motors, MOTOR_RIGHT,  WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_LEFT, WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT, WIFI_CTRL_SPEED);
     printf("[Motor] FORWARD speed=%d\n", WIFI_CTRL_SPEED);
     return;
   }
   if (strncmp(cmd, "BACK", 4) == 0) {
-    apply_motor(motors, MOTOR_LEFT,  -WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_LEFT, -WIFI_CTRL_SPEED);
     apply_motor(motors, MOTOR_RIGHT, -WIFI_CTRL_SPEED);
     printf("[Motor] BACK speed=%d\n", WIFI_CTRL_SPEED);
     return;
   }
   if (strncmp(cmd, "LEFT", 4) == 0) {
-    apply_motor(motors, MOTOR_LEFT,  -WIFI_CTRL_SPEED);
-    apply_motor(motors, MOTOR_RIGHT,  WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_LEFT, -WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_RIGHT, WIFI_CTRL_SPEED);
     printf("[Motor] LEFT speed=%d\n", WIFI_CTRL_SPEED);
     return;
   }
   if (strncmp(cmd, "RIGHT", 5) == 0) {
-    apply_motor(motors, MOTOR_LEFT,   WIFI_CTRL_SPEED);
+    apply_motor(motors, MOTOR_LEFT, WIFI_CTRL_SPEED);
     apply_motor(motors, MOTOR_RIGHT, -WIFI_CTRL_SPEED);
     printf("[Motor] RIGHT speed=%d\n", WIFI_CTRL_SPEED);
     return;
@@ -82,9 +87,10 @@ static void execute_cmd(const char *cmd, L298N_t *motors) {
   /* '?' — report current PWM duties back to client */
   if (cmd[0] == '?' && (cmd[1] == '\0' || cmd[1] == ' ')) {
     char rep[48];
-    int n = snprintf(rep, sizeof(rep), "L=%d R=%d\r\n",
-                     left_pwm_signed, right_pwm_signed);
-    if (n > 0) send_ack(rep);
+    int n = snprintf(rep, sizeof(rep), "L=%d R=%d\r\n", left_pwm_signed,
+                     right_pwm_signed);
+    if (n > 0)
+      send_ack(rep);
     return;
   }
 
@@ -93,12 +99,15 @@ static void execute_cmd(const char *cmd, L298N_t *motors) {
   if ((which == 'L' || which == 'R' || which == 'B') &&
       (cmd[1] == ' ' || cmd[1] == '\t')) {
     int pct = atoi(cmd + 2);
-    if (which == 'L' || which == 'B') apply_motor(motors, MOTOR_LEFT,  pct);
-    if (which == 'R' || which == 'B') apply_motor(motors, MOTOR_RIGHT, pct);
+    if (which == 'L' || which == 'B')
+      apply_motor(motors, MOTOR_LEFT, pct);
+    if (which == 'R' || which == 'B')
+      apply_motor(motors, MOTOR_RIGHT, pct);
 
     char rep[48];
     int n = snprintf(rep, sizeof(rep), "OK %c=%d\r\n", which, pct);
-    if (n > 0) send_ack(rep);
+    if (n > 0)
+      send_ack(rep);
     printf("[Motor] %c = %d\n", which, pct);
     return;
   }
@@ -123,12 +132,14 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
 
   char report[128];
   int n = snprintf(report, sizeof(report),
-                   "F=%.1f,L=%.1f,R=%.1f,AX=%.2f,AY=%.2f,AZ=%.2f,GX=%.2f,GY=%.2f,GZ=%.2f\r\n",
-                   df, dl, dr,
-                   imu->accel.x, imu->accel.y, imu->accel.z,
-                   imu->gyro.x,  imu->gyro.y,  imu->gyro.z);
-  if (n < 0) return;
-  if (n > (int)sizeof(report)) n = (int)sizeof(report);
+                   "F=%.1f,L=%.1f,R=%.1f,AX=%.2f,AY=%.2f,AZ=%.2f,GX=%.2f,GY=%."
+                   "2f,GZ=%.2f\r\n",
+                   df, dl, dr, imu->accel.x, imu->accel.y, imu->accel.z,
+                   imu->gyro.x, imu->gyro.y, imu->gyro.z);
+  if (n < 0)
+    return;
+  if (n > (int)sizeof(report))
+    n = (int)sizeof(report);
 
   Wifi_TcpIp_SendDataTcp((uint8_t)active_link, (uint16_t)n, (uint8_t *)report);
   printf("[WiFi] sensors: %s", report);
@@ -138,19 +149,23 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
  * Returns bytes consumed (> 0), or 0 if the event is incomplete. */
 static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
                                        L298N_t *motors) {
-  if (len == 0) return 0;
+  if (len == 0)
+    return 0;
 
   /* +IPD,<id>,<n>:payload */
   if (len >= 5 && strncmp(buf, "+IPD,", 5) == 0) {
     const char *colon = strchr(buf, ':');
-    if (!colon) return 0; /* header still arriving */
+    if (!colon)
+      return 0; /* header still arriving */
     int id = 0, n = 0;
     if (sscanf(buf, "+IPD,%d,%d:", &id, &n) == 2 && n > 0) {
       uint16_t hdr = (uint16_t)(colon - buf) + 1;
-      if (hdr + (uint16_t)n > len) return 0; /* payload still arriving */
+      if (hdr + (uint16_t)n > len)
+        return 0; /* payload still arriving */
       char payload[64];
       uint16_t cp = ((uint16_t)n < sizeof(payload) - 1)
-                        ? (uint16_t)n : (uint16_t)(sizeof(payload) - 1);
+                        ? (uint16_t)n
+                        : (uint16_t)(sizeof(payload) - 1);
       memcpy(payload, buf + hdr, cp);
       payload[cp] = '\0';
       while (cp > 0 && (payload[cp - 1] == '\r' || payload[cp - 1] == '\n'))
@@ -169,14 +184,16 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
   if (buf[0] >= '0' && buf[0] <= '4' && len >= 2 && buf[1] == ',') {
     if (len >= 9 && strncmp(buf + 2, "CONNECT", 7) == 0) {
       const char *eol = strchr(buf, '\n');
-      if (!eol) return 0;
+      if (!eol)
+        return 0;
       active_link = (int8_t)(buf[0] - '0');
       printf("[WiFi] client %d connected.\n", active_link);
       return (uint16_t)(eol - buf) + 1;
     }
     if (len >= 8 && strncmp(buf + 2, "CLOSED", 6) == 0) {
       const char *eol = strchr(buf, '\n');
-      if (!eol) return 0;
+      if (!eol)
+        return 0;
       int8_t cid = (int8_t)(buf[0] - '0');
       if (active_link == cid) {
         active_link = -1;
@@ -193,16 +210,19 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
 static void poll_async_events(L298N_t *motors) {
   char snap[ESP_RING_SIZE];
   uint16_t len = esp_ring_urc_peek((uint8_t *)snap, sizeof(snap) - 1);
-  if (len == 0) return;
+  if (len == 0)
+    return;
   snap[len] = '\0';
 
   uint16_t pos = 0;
   while (pos < len) {
     uint16_t eaten = process_one_wifi_event(snap + pos, len - pos, motors);
-    if (eaten == 0) break;
+    if (eaten == 0)
+      break;
     pos += eaten;
   }
-  if (pos > 0) esp_ring_urc_consume(pos);
+  if (pos > 0)
+    esp_ring_urc_consume(pos);
 
   /* Drop stale bytes if the URC cursor is falling far behind */
   if (esp_ring_urc_available() > (3 * ESP_RING_SIZE) / 4)
@@ -214,10 +234,10 @@ static void poll_async_events(L298N_t *motors) {
  * --------------------------------------------------------------------- */
 
 /* Maximum number of WiFi connection attempts before giving up. */
-#define WIFI_MAX_RETRIES     3
+#define WIFI_MAX_RETRIES 3
 /* Boot delay: ESP8266 needs time after power-on to finish its boot banner.
  * With low battery / voltage sag this can take longer than usual. */
-#define WIFI_BOOT_DELAY_MS   3000
+#define WIFI_BOOT_DELAY_MS 3000
 
 void WiFiControl_Init(const char *ssid, const char *password) {
   esp_ring_init();
@@ -252,7 +272,8 @@ void WiFiControl_Init(const char *ssid, const char *password) {
   }
   if (!esp_ok) {
     printf("[WiFi] ESP8266 not responding after %d attempts. "
-           "Check wiring/power!\n", WIFI_MAX_RETRIES);
+           "Check wiring/power!\n",
+           WIFI_MAX_RETRIES);
     return;
   }
   printf("[WiFi] ESP8266 ready.\n");
@@ -266,8 +287,8 @@ void WiFiControl_Init(const char *ssid, const char *password) {
   /* ---- Connect to AP with retry ------------------------------------- */
   bool connected = false;
   for (uint8_t attempt = 1; attempt <= WIFI_MAX_RETRIES; attempt++) {
-    printf("[WiFi] Connecting to \"%s\" (attempt %d/%d) ...\n",
-           ssid, attempt, WIFI_MAX_RETRIES);
+    printf("[WiFi] Connecting to \"%s\" (attempt %d/%d) ...\n", ssid, attempt,
+           WIFI_MAX_RETRIES);
 
     if (Wifi_Station_ConnectToAp((char *)ssid, (char *)password, NULL)) {
       connected = true;
@@ -298,10 +319,10 @@ void WiFiControl_Init(const char *ssid, const char *password) {
   HAL_Delay(2000);
   Wifi_RxClear();
 
-  if (!Wifi_TcpIp_SetMultiConnection(true)) {
-    printf("[WiFi] Failed to enable multi-connection.\n");
-    return;
-  }
+  // if (!Wifi_TcpIp_SetMultiConnection(true)) {
+  //   printf("[WiFi] Failed to enable multi-connection.\n");
+  //   return;
+  // }
 
   if (!Wifi_TcpIp_SetEnableTcpServer(WIFI_TCP_PORT)) {
     printf("[WiFi] Failed to start TCP server.\n");

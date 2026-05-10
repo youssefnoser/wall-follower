@@ -85,7 +85,7 @@ set(SOURCES
     #   src/simple_fsm_main.c          #- simple forward stop fsm
     #   src/main.c                     #- wall-follower / WiFi remote-control
     #   src/pwm_wifi_test_main.c
-      src/imu_main.c                 #- IMU (MPU6050) test
+    #   src/imu_main.c                 #- IMU (MPU6050) test
     #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
     src/main.c
     src/esp_ring.c
@@ -93,11 +93,11 @@ set(SOURCES
     src/hc_sr04.c
     src/ir_sensor.c
     src/mpu6050.c
-    # src/ESP8266.c
+    src/ESP8266.c
     src/dwt_stm32_delay.c
     src/wall_follower_fsm.c
     src/pid.c
-    # src/wifi_control.c
+    src/wifi_control.c
     ${HAL_SOURCES}
     ${STARTUP_FILE}
 )

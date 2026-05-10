@@ -14,7 +14,7 @@
  * the PID wall follower.  Leave it commented for autonomous wall following. */
 /* #define WIFI_CONTROL_MODE */
 #define ESP8266_DEBUG 1
-// #define WIFI_CONTROL_MODE
+#define WIFI_CONTROL_MODE
 // #define ESP8266_DEBUG 1
 #define WIFI_SSID "Yousef"
 #define WIFI_PASSWORD "20202020"
@@ -46,8 +46,8 @@ int main(void) {
   SystemClock_Config();
   DWT_Delay_Init();
   initialise_monitor_handles();
-  // USART1_UART_Init();
-  // esp_ring_init();
+  USART1_UART_Init();
+  esp_ring_init();
 
   GPIO_Init();
   TIM_Init();
@@ -113,8 +113,8 @@ int main(void) {
     MPU6050_ReadAll(&imu);
 
     /* ---- FSM step ----------------------------------------------------- */
-    // WallFollower_Update(&fsm, dist_front, dist_left, dist_right, ir_safe,
-    //                     imu.gyro.z); /* gyro Z in degrees/second */
+    WallFollower_Update(&fsm, dist_front, dist_left, dist_right, ir_safe,
+                        imu.gyro.z); /* gyro Z in degrees/second */
 
     /* ---- Debug print -------------------------------------------------- */
     printf("[FSM] %-13s | Raw F:%5.1f L:%5.1f R:%5.1f | "
@@ -391,7 +391,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 /* ------------------------------------------------------------------ */
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
 void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }
-// void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
+void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
 
 /* HAL invokes this once HAL_UART_Receive_IT completes a single byte.
  * The driver's Wifi_RxCallBack pushes that byte into Wifi.RxBuffer and
