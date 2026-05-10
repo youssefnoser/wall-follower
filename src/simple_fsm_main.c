@@ -1,16 +1,21 @@
 
 
+#include "ESP8266.h"
 #include "dwt_stm32_delay.h"
+#include "flash_logger.h"
+#include "esp_ring.h"
 #include "hc_sr04.h"
 #include "ir_sensor.h"
 #include "l298n.h"
-#include "mpu6050.h"
 #include "pid.h"
 #include "stm32f1xx_hal.h"
+#include "wifi_control.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* ---- Left-wall follower tuning --------------------------------------- */
-#define LEFT_WALL_SETPOINT  15.0f  /* cm – target distance from left wall  */
+#define LEFT_WALL_SETPOINT  15.0f  /* cm – initial target distance (runtime-tunable) */
 #define LEFT_WALL_KP         2.0f
 #define LEFT_WALL_KI         0.0f
 #define LEFT_WALL_KD         0.5f
@@ -18,7 +23,12 @@
 #define LEFT_EMA_ALPHA        0.3f /* ultrasonic EMA filter weight          */
 #define FRONT_OBSTACLE_CM    20.0f /* cm – front obstacle stop threshold    */
 
+/* ---- WiFi / PID-tuner ------------------------------------------------ */
+#define WIFI_SSID     "Yousef"
+#define WIFI_PASSWORD "20202020"
+
 /* Global Handlers */
+UART_HandleTypeDef huart1; /* ESP8266 UART handle – aliased by _WIFI_USART macro */
 L298N_t motor_driver;
 
 HC_SR04_t ultrasonic_front;
@@ -26,29 +36,114 @@ HC_SR04_t ultrasonic_left;
 HC_SR04_t ultrasonic_right;
 
 IR_Sensor_t ir_sensor_front;
-MPU6050_t imu;
 
 /* Forward Declarations */
 void SystemClock_Config(void);
 void GPIO_Init(void);
 void TIM_Init(void);
-void I2C_Init(void);
 void ADC_Init(void);
+void USART1_UART_Init(void);
 
-extern void initialise_monitor_handles(void);
+/* -----------------------------------------------------------------------
+ * WiFi PID tuner
+ *
+ * Accepted TCP commands (send from phone/PC to port 1234):
+ *   PID=Kp,Ki,Kd   – update all three gains and reset integral
+ *   SP=15.0         – change wall setpoint distance (cm)
+ *   GET             – reply with current Kp, Ki, Kd, SP
+ *
+ * The MCU replies with a one-line ACK so you can confirm the change.
+ * --------------------------------------------------------------------- */
+static int8_t wifi_link = -1;
+
+static void pid_poll_wifi(PID_t *pid, float *setpoint) {
+  char snap[128];
+  uint16_t len = esp_ring_urc_peek((uint8_t *)snap, sizeof(snap) - 1);
+  if (len == 0) return;
+  snap[len] = '\0';
+
+  uint16_t pos = 0;
+  while (pos < len) {
+    /* +IPD,<id>,<n>:<payload> */
+    if (strncmp(snap + pos, "+IPD,", 5) == 0) {
+      const char *colon = strchr(snap + pos, ':');
+      if (!colon) break;
+      int id = 0, n = 0;
+      if (sscanf(snap + pos, "+IPD,%d,%d:", &id, &n) == 2 && n > 0) {
+        uint16_t hdr = (uint16_t)(colon - (snap + pos)) + 1;
+        if (pos + hdr + (uint16_t)n > len) break;
+        char payload[64];
+        uint16_t cp = ((uint16_t)n < (uint16_t)(sizeof(payload) - 1))
+                          ? (uint16_t)n : (uint16_t)(sizeof(payload) - 1);
+        memcpy(payload, snap + pos + hdr, cp);
+        payload[cp] = '\0';
+        while (cp > 0 && (payload[cp - 1] == '\r' || payload[cp - 1] == '\n'))
+          payload[--cp] = '\0';
+        wifi_link = (int8_t)id;
+
+        char ack[80];
+        int alen = 0;
+
+        if (strncmp(payload, "PID=", 4) == 0) {
+          /* PID=Kp,Ki,Kd */
+          char *p = payload + 4;
+          char *end;
+          float kp = strtof(p, &end);
+          if (*end == ',') {
+            float ki = strtof(end + 1, &end);
+            if (*end == ',') {
+              float kd = strtof(end + 1, NULL);
+              PID_Init(pid, kp, ki, kd, -LEFT_BASE_SPEED, LEFT_BASE_SPEED);
+              PID_Reset(pid);
+              alen = snprintf(ack, sizeof(ack),
+                              "OK PID KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
+              printf("[PID tuner] KP=%.3f KI=%.3f KD=%.3f\r\n", kp, ki, kd);
+            }
+          }
+        } else if (strncmp(payload, "SP=", 3) == 0) {
+          /* SP=<cm>  – change wall setpoint */
+          float sp = strtof(payload + 3, NULL);
+          *setpoint = sp;
+          alen = snprintf(ack, sizeof(ack), "OK SP=%.1f\r\n", sp);
+          printf("[PID tuner] Setpoint=%.1f cm\r\n", sp);
+        } else if (strncmp(payload, "GET", 3) == 0) {
+          /* GET – query current params */
+          alen = snprintf(ack, sizeof(ack),
+                          "KP=%.3f KI=%.3f KD=%.3f SP=%.1f\r\n",
+                          pid->Kp, pid->Ki, pid->Kd, *setpoint);
+        }
+
+        if (alen > 0)
+          Wifi_TcpIp_SendDataTcp((uint8_t)wifi_link, (uint16_t)alen,
+                                 (uint8_t *)ack);
+        pos += hdr + (uint16_t)n;
+        continue;
+      }
+      pos += 5;
+      continue;
+    }
+    /* <id>,CONNECT / <id>,CLOSED – skip to end of line */
+    if (snap[pos] >= '0' && snap[pos] <= '4' && (pos + 1 < len) &&
+        snap[pos + 1] == ',') {
+      const char *eol = strchr(snap + pos, '\n');
+      if (!eol) break;
+      pos += (uint16_t)(eol - (snap + pos)) + 1;
+      continue;
+    }
+    pos++;
+  }
+  if (pos > 0) esp_ring_urc_consume(pos);
+}
 
 int main(void)
 {
   HAL_Init();
   SystemClock_Config();
   DWT_Delay_Init();
-    
-    initialise_monitor_handles();
+  flash_logger_init();
 
-  
   GPIO_Init();
   TIM_Init();
-  I2C_Init();
   ADC_Init();
 
   HC_SR04_Init(&ultrasonic_front);
@@ -59,73 +154,18 @@ int main(void)
 
   L298N_Init(&motor_driver);
 
-  MPU6050_Init(&imu);
+  USART1_UART_Init();
+  WiFiControl_Init(WIFI_SSID, WIFI_PASSWORD);
 
-  /* Zero biases by default */
-  imu.accel_bias.x = imu.accel_bias.y = imu.accel_bias.z = 0.0f;
-  imu.gyro_bias.x = imu.gyro_bias.y = imu.gyro_bias.z = 0.0f;
-
-  /* Initialize filter params and state */
-  imu.filt_alpha = 0.2f; /* weight for new samples (tunable) */
-  imu.filt_initialized = 0;
-  imu.accel_filt.x = imu.accel_filt.y = imu.accel_filt.z = 0.0f;
-  imu.gyro_filt.x = imu.gyro_filt.y = imu.gyro_filt.z = 0.0f;
-
-  /* If front IR sensor is covered at startup, enter IMU calibration mode.
-     Cover the front IR (IR_OBJECT_DETECTED) to trigger calibration. */
-  uint8_t do_calibration = 1;
-     if (do_calibration)
-  {
-    /* Simple calibration: average N samples while stationary */
-    #define IMU_CAL_SAMPLES 10000
-    Vector3_t a_sum = {0}, g_sum = {0};
-    for (int i = 0; i < IMU_CAL_SAMPLES; ++i)
-    {
-      MPU6050_ReadAll(&imu);
-      a_sum.x += imu.accel.x;
-      a_sum.y += imu.accel.y;
-      a_sum.z += imu.accel.z;
-      g_sum.x += imu.gyro.x;
-      g_sum.y += imu.gyro.y;
-      g_sum.z += imu.gyro.z;
-      HAL_Delay(10);
-    }
-    imu.accel_bias.x = a_sum.x / IMU_CAL_SAMPLES;
-    imu.accel_bias.y = a_sum.y / IMU_CAL_SAMPLES;
-    /* For Z, subtract expected +1g due to gravity when stationary and oriented so Z faces up */
-    imu.accel_bias.z = (a_sum.z / IMU_CAL_SAMPLES) - 1.0f;
-
-    imu.gyro_bias.x = g_sum.x / IMU_CAL_SAMPLES;
-    imu.gyro_bias.y = g_sum.y / IMU_CAL_SAMPLES;
-    imu.gyro_bias.z = g_sum.z / IMU_CAL_SAMPLES;
-
-    printf("IMU Calibration complete. Accel bias [%.3f, %.3f, %.3f] g  Gyro bias [%.3f, %.3f, %.3f] dps\r\n",
-           imu.accel_bias.x, imu.accel_bias.y, imu.accel_bias.z,
-           imu.gyro_bias.x, imu.gyro_bias.y, imu.gyro_bias.z);
-  }
-
-  /* Seed filters from current sensor state so filtering doesn't start from zero. */
-  MPU6050_ReadAll(&imu);
-  MPU6050_ReadTemperature(&imu);
-  imu.accel_filt.x = imu.accel.x - imu.accel_bias.x;
-  imu.accel_filt.y = imu.accel.y - imu.accel_bias.y;
-  imu.accel_filt.z = imu.accel.z - imu.accel_bias.z;
-  imu.gyro_filt.x = imu.gyro.x - imu.gyro_bias.x;
-  imu.gyro_filt.y = imu.gyro.y - imu.gyro_bias.y;
-  imu.gyro_filt.z = imu.gyro.z - imu.gyro_bias.z;
-  imu.filt_initialized = 1;
-
-  /* Left-wall PID controller */
+  /* Left-wall PID controller (gains and setpoint tunable via WiFi at runtime) */
   PID_t pid_left_wall;
+
   PID_Init(&pid_left_wall, LEFT_WALL_KP, LEFT_WALL_KI, LEFT_WALL_KD,
            -LEFT_BASE_SPEED, LEFT_BASE_SPEED);
+  float wall_setpoint = LEFT_WALL_SETPOINT; /* runtime-mutable via "SP=" cmd */
 
   float filt_left = 100.0f; /* EMA state, seeded high so first read converges */
   uint32_t last_pid_tick = HAL_GetTick();
-
-  /* IMU telemetry timing (ms) */
-  uint32_t imu_last = 0;
-  const uint32_t imu_period = 200; /* 200 ms -> 5 Hz */
 
   // printf("Simple FSM ready - Moving forward (Stand-alone).\n");
 
@@ -154,6 +194,9 @@ int main(void)
     /* IR_NO_OBJECT -> route clear, IR_OBJECT_DETECTED -> obstacle */
     uint8_t ir_safe = (IR_Sensor_GetState(&ir_sensor_front) == IR_NO_OBJECT);
     ir_safe = 1; /* For testing without IR sensor */
+    /* ---- Poll WiFi for PID tuning commands ---------------------------- */
+    pid_poll_wifi(&pid_left_wall, &wall_setpoint);
+
     /* ---- EMA filter on left ultrasonic -------------------------------- */
     filt_left = LEFT_EMA_ALPHA * dist_left + (1.0f - LEFT_EMA_ALPHA) * filt_left;
 
@@ -176,7 +219,7 @@ int main(void)
          *   positive → too far from wall → steer left (right faster)
          *   negative → too close to wall → steer right (left faster)  */
         float pid_out = PID_Compute(&pid_left_wall,
-                                    LEFT_WALL_SETPOINT, filt_left, dt);
+                                    wall_setpoint, filt_left, dt);
 
         int speed_l = LEFT_BASE_SPEED - (int)pid_out;
         int speed_r = LEFT_BASE_SPEED + (int)pid_out;
@@ -193,53 +236,7 @@ int main(void)
                dist_front, dist_left, filt_left, pid_out, speed_l, speed_r);
     }
 
-    /* IMU: periodic read and print (throttled) */
-    // if ((now - imu_last) >= imu_period)
-    // {
-            MPU6050_ReadAll(&imu);
-            MPU6050_ReadTemperature(&imu);
-
-            /* Apply calibration biases */
-            float ax = imu.accel.x - imu.accel_bias.x;
-            float ay = imu.accel.y - imu.accel_bias.y;
-            float az = imu.accel.z - imu.accel_bias.z;
-            float gx = imu.gyro.x - imu.gyro_bias.x;
-            float gy = imu.gyro.y - imu.gyro_bias.y;
-            float gz = imu.gyro.z - imu.gyro_bias.z;
-
-            /* Exponential Moving Average filter (EMA):
-               new_filt = alpha*sample + (1-alpha)*prev_filt
-               alpha is stored in imu.filt_alpha. */
-            if (!imu.filt_initialized)
-            {
-              imu.accel_filt.x = ax;
-              imu.accel_filt.y = ay;
-              imu.accel_filt.z = az;
-              imu.gyro_filt.x = gx;
-              imu.gyro_filt.y = gy;
-              imu.gyro_filt.z = gz;
-              imu.filt_initialized = 1;
-            }
-            else
-            {
-              float a = imu.filt_alpha;
-              float b = 1.0f - a;
-              imu.accel_filt.x = a * ax + b * imu.accel_filt.x;
-              imu.accel_filt.y = a * ay + b * imu.accel_filt.y;
-              imu.accel_filt.z = a * az + b * imu.accel_filt.z;
-              imu.gyro_filt.x = a * gx + b * imu.gyro_filt.x;
-              imu.gyro_filt.y = a * gy + b * imu.gyro_filt.y;
-              imu.gyro_filt.z = a * gz + b * imu.gyro_filt.z;
-            }
-
-            printf("IMU (filt): Accel [%.3f, %.3f, %.3f] g  Gyro [%.3f, %.3f, %.3f] dps  Temp: %.2f C\r\n",
-              imu.accel_filt.x, imu.accel_filt.y, imu.accel_filt.z,
-              imu.gyro_filt.x, imu.gyro_filt.y, imu.gyro_filt.z,
-              imu.temperature);
-      imu_last = now;
-    // }
-
-    /* We removed the 50ms loop delay here because the 80ms delay above is enough for the loop rate */
+    /* Loop rate is ~80ms from the two 40ms sensor delays above */
   }
 
   return 0;
@@ -409,35 +406,7 @@ void TIM_Init(void)
   motor_driver.motor_right.PWM_Max = 1000;
 }
 
-/* ------------------------------------------------------------------ */
-void I2C_Init(void)
-{
-  static I2C_HandleTypeDef hi2c1;
 
-  __HAL_RCC_I2C1_CLK_ENABLE();
-  __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  hi2c1.Instance = I2C1;
-  hi2c1.Init.ClockSpeed = 400000;
-  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
-  hi2c1.Init.OwnAddress1 = 0;
-  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
-    while (1)
-      ;
-
-  imu.hi2c = &hi2c1;
-  imu.i2c_addr = MPU6050_ADDR;
-}
 
 void ADC_Init(void) {}
 
@@ -476,3 +445,49 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 /* ------------------------------------------------------------------ */
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
 void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }
+
+/* ------------------------------------------------------------------ */
+/* USART1: PA9 TX (AF push-pull) / PA10 RX (input pull-up), 115200-8-N-1.
+ * Used by the ESP8266 driver. */
+void USART1_UART_Init(void)
+{
+  __HAL_RCC_USART1_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_AFIO_CLK_ENABLE();
+
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  GPIO_InitStruct.Pin   = GPIO_PIN_9;
+  GPIO_InitStruct.Mode  = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin  = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  _WIFI_USART.Instance                    = USART1;
+  _WIFI_USART.Init.BaudRate               = 115200;
+  _WIFI_USART.Init.WordLength             = UART_WORDLENGTH_8B;
+  _WIFI_USART.Init.StopBits              = UART_STOPBITS_1;
+  _WIFI_USART.Init.Parity                = UART_PARITY_NONE;
+  _WIFI_USART.Init.Mode                  = UART_MODE_TX_RX;
+  _WIFI_USART.Init.HwFlowCtl            = UART_HWCONTROL_NONE;
+  _WIFI_USART.Init.OverSampling         = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&_WIFI_USART) != HAL_OK)
+    while (1);
+
+  HAL_NVIC_SetPriority(USART1_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(USART1_IRQn);
+}
+
+void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
+
+/* HAL calls this after each single-byte RX IT completes.
+ * Wifi_RxCallBack() pushes the byte into the ring and re-arms the next IT. */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART1)
+    Wifi_RxCallBack();
+}

@@ -2,6 +2,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdint.h>
 
 int _close(int file) {
     return -1;
@@ -39,4 +40,18 @@ int _write(int file, char *ptr, int len) {
         return len;
     }
     return -1;
+}
+
+extern char _end; /* linker-defined: first byte after BSS */
+static char *heap_ptr = &_end;
+
+void *_sbrk(int incr) {
+    char *prev = heap_ptr;
+    heap_ptr += incr;
+    return (void *)prev;
+}
+
+void _exit(int status) {
+    (void)status;
+    while (1); /* spin forever — no OS to return to */
 }
