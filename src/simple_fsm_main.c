@@ -15,17 +15,18 @@
 #include <string.h>
 
 /* ---- Corridor-centering tuning --------------------------------------- */
-#define CENTER_KP            1.5f  /* proportional gain (negate if car goes wrong way) */
+#define CENTER_KP            1.5f
 #define CENTER_KI            0.0f
 #define CENTER_KD            0.8f
-#define CENTER_MARGIN_CM     2.5f  /* dead-band: ignore error smaller than this (cm)   */
-#define BASE_SPEED            35   /* 0-100 PWM base duty                              */
-#define EMA_ALPHA            0.3f  /* ultrasonic EMA filter weight                     */
-#define FRONT_OBSTACLE_CM   20.0f  /* cm – front obstacle stop threshold               */
+#define CENTER_MARGIN_CM     5.0f  /* dead-band: suppress corrections smaller than ±5 cm */
+#define BASE_SPEED            35   /* 0-100 PWM base duty                                */
+#define EMA_ALPHA            0.3f  /* ultrasonic EMA filter weight                       */
+#define FRONT_OBSTACLE_CM   20.0f  /* cm – front obstacle stop threshold                 */
+#define LEFT_MOTOR_TRIM       5   /* PWM offset added to left motor to compensate for it being slower (+= faster) */
 
 /* ---- WiFi / PID-tuner ------------------------------------------------ */
-#define WIFI_SSID     "Yousef"
-#define WIFI_PASSWORD "20202020"
+#define WIFI_SSID     "ZirnosSpace"
+#define WIFI_PASSWORD "12345678"
 
 /* Global Handlers */
 UART_HandleTypeDef huart1; /* ESP8266 UART handle – aliased by _WIFI_USART macro */
@@ -53,6 +54,17 @@ void USART1_UART_Init(void);
  *   GET             – reply with current KP, KI, KD, MB
  * --------------------------------------------------------------------- */
 static int8_t wifi_link = -1;
+static float g_dist_front = 200.0f;
+static float g_filt_left  = 100.0f;
+static float g_filt_right = 100.0f;
+/* 0=AUTO (PID centering), 1=MANUAL (remote control) */
+static uint8_t g_mode       = 0;
+/* manual motor command: 0=stop 1=fwd 2=bwd 3=left 4=right */
+static uint8_t g_manual_cmd = 0;
+/* runtime-tunable base PWM duty (0-100), default from #define */
+static uint8_t g_base_speed = BASE_SPEED;
+/* additive PWM offset for left motor to compensate physical speed mismatch */
+static int8_t g_left_trim = LEFT_MOTOR_TRIM;
 
 static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
   char snap[128];
@@ -103,16 +115,50 @@ static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
           if (mb >= 0.0f) *margin = mb;
           alen = snprintf(ack, sizeof(ack), "OK MB=%.2f\r\n", *margin);
           printf("[tuner] Margin=%.2f cm\r\n", *margin);
+        } else if (strncmp(payload, "DATA", 4) == 0) {
+          alen = snprintf(ack, sizeof(ack),
+                          "L=%.1f F=%.1f R=%.1f\r\n",
+                          g_filt_left, g_dist_front, g_filt_right);
         } else if (strncmp(payload, "GET", 3) == 0) {
           alen = snprintf(ack, sizeof(ack),
-                          "KP=%.3f KI=%.3f KD=%.3f MB=%.2f RUN=%d\r\n",
-                          pid->Kp, pid->Ki, pid->Kd, *margin, (int)*running);
+                          "KP=%.3f KI=%.3f KD=%.3f MB=%.2f SPD=%d TRIM=%d RUN=%d L=%.1f F=%.1f R=%.1f\r\n",
+                          pid->Kp, pid->Ki, pid->Kd, *margin, g_base_speed, g_left_trim, (int)*running,
+                          g_filt_left, g_dist_front, g_filt_right);
         } else if (strncmp(payload, "STOP", 4) == 0) {
           *running = 0;
+          g_manual_cmd = 0;
           alen = snprintf(ack, sizeof(ack), "OK STOPPED\r\n");
         } else if (strncmp(payload, "GO", 2) == 0) {
           *running = 1;
           alen = snprintf(ack, sizeof(ack), "OK RUNNING\r\n");
+        } else if (strncmp(payload, "SPEED=", 6) == 0) {
+          int spd = (int)strtof(payload + 6, NULL);
+          if (spd < 0)   spd = 0;
+          if (spd > 100) spd = 100;
+          g_base_speed = (uint8_t)spd;
+          alen = snprintf(ack, sizeof(ack), "OK SPEED=%d\r\n", g_base_speed);
+        } else if (strncmp(payload, "TRIM=", 5) == 0) {
+          int tr = (int)strtof(payload + 5, NULL);
+          if (tr < -50) tr = -50;
+          if (tr > 50)  tr = 50;
+          g_left_trim = (int8_t)tr;
+          alen = snprintf(ack, sizeof(ack), "OK TRIM=%d\r\n", g_left_trim);
+        } else if (strncmp(payload, "AUTO", 4) == 0) {
+          g_mode = 0;
+          *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK AUTO\r\n");
+        } else if (strncmp(payload, "FWD", 3) == 0) {
+          g_mode = 1; g_manual_cmd = 1; *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK FWD\r\n");
+        } else if (strncmp(payload, "BWD", 3) == 0) {
+          g_mode = 1; g_manual_cmd = 2; *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK BWD\r\n");
+        } else if (strncmp(payload, "LEFT", 4) == 0) {
+          g_mode = 1; g_manual_cmd = 3; *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK LEFT\r\n");
+        } else if (strncmp(payload, "RIGHT", 5) == 0) {
+          g_mode = 1; g_manual_cmd = 4; *running = 1;
+          alen = snprintf(ack, sizeof(ack), "OK RIGHT\r\n");
         }
 
         if (alen > 0)
@@ -164,8 +210,6 @@ int main(void)
   PID_Init(&pid_center, CENTER_KP, CENTER_KI, CENTER_KD, -BASE_SPEED, BASE_SPEED);
   float margin = CENTER_MARGIN_CM; /* dead-band, runtime-mutable via "MB=" cmd */
 
-  float filt_left  = 100.0f; /* EMA states seeded high so first reads converge */
-  float filt_right = 100.0f;
   uint32_t last_pid_tick = HAL_GetTick();
   uint8_t running = 1; /* STOP/GO command toggles this */
 
@@ -186,7 +230,7 @@ int main(void)
     /* Start measurements sequentially to avoid cross-talk, with reduced delays */
     HC_SR04_StartMeasurement(&ultrasonic_front);
     HAL_Delay(40); /* Wait for front echo (max ~38ms for timeout) */
-    float dist_front = HC_SR04_GetDistance(&ultrasonic_front);
+    g_dist_front = HC_SR04_GetDistance(&ultrasonic_front);
 
     HC_SR04_StartMeasurement(&ultrasonic_left);
     HAL_Delay(40);
@@ -204,8 +248,8 @@ int main(void)
     pid_poll_wifi(&pid_center, &margin, &running);
 
     /* ---- EMA filters -------------------------------------------------- */
-    filt_left  = EMA_ALPHA * dist_left  + (1.0f - EMA_ALPHA) * filt_left;
-    filt_right = EMA_ALPHA * dist_right + (1.0f - EMA_ALPHA) * filt_right;
+    g_filt_left  = EMA_ALPHA * dist_left  + (1.0f - EMA_ALPHA) * g_filt_left;
+    g_filt_right = EMA_ALPHA * dist_right + (1.0f - EMA_ALPHA) * g_filt_right;
 
     /* ---- dt for PID --------------------------------------------------- */
     uint32_t pid_now = HAL_GetTick();
@@ -217,39 +261,73 @@ int main(void)
     {
         L298N_StopAll(&motor_driver);
     }
-    else if (dist_front < FRONT_OBSTACLE_CM || !ir_safe)
+    else if (g_mode == 1)
+    {
+        /* ---- Manual remote-control mode ---------------------------------- */
+        int ml = (int)g_base_speed + g_left_trim;
+        ml = (ml > 100) ? 100 : (ml < 0) ? 0 : ml;
+        switch (g_manual_cmd) {
+          case 1: /* FWD */
+            L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_FORWARD,  (uint8_t)ml);
+            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD,  g_base_speed);
+            break;
+          case 2: /* BWD */
+            L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_BACKWARD, (uint8_t)ml);
+            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, g_base_speed);
+            break;
+          case 3: /* LEFT – pivot: right fwd, left stop */
+            L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_FORWARD, 0);
+            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, g_base_speed);
+            break;
+          case 4: /* RIGHT – pivot: left fwd, right stop */
+            L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_FORWARD,  (uint8_t)ml);
+            L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD,  0);
+            break;
+          default:
+            L298N_StopAll(&motor_driver);
+            break;
+        }
+    }
+    else if (g_dist_front < FRONT_OBSTACLE_CM || !ir_safe)
     {
         L298N_StopAll(&motor_driver);
         PID_Reset(&pid_center);
         printf("[FSM] STOP  | F:%.1f L:%.1f R:%.1f\r\n",
-               dist_front, filt_left, filt_right);
+               g_dist_front, g_filt_left, g_filt_right);
     }
     else
     {
-        /* Centering error: positive → robot is left of center (right wall farther)
-         *                  negative → robot is right of center (left wall farther)
-         * Dead-band: suppress small errors to avoid jitter near center.
-         * PID output >0 → left wheel faster → steers right (toward center when left of center).
-         * Negate Kp via WiFi if car goes the wrong way. */
-        float wall_error = filt_right - filt_left;
-        if (wall_error < 0.0f && wall_error > -margin) wall_error = 0.0f;
-        if (wall_error > 0.0f && wall_error <  margin) wall_error = 0.0f;
+        /* ---- AUTO corridor-centering PID --------------------------------- */
+        /*
+         * wall_error > 0 → robot closer to left wall  → steer right
+         * wall_error < 0 → robot closer to right wall → steer left
+         * wall_error = 0 → centred
+         */
+        float wall_error = g_filt_left - g_filt_right;
 
-        float pid_out = PID_Compute(&pid_center, 0.0f, -wall_error, dt);
+        if (wall_error > -margin && wall_error < margin)
+            wall_error = 0.0f;
 
-        int speed_l = BASE_SPEED + (int)pid_out;
-        int speed_r = BASE_SPEED - (int)pid_out;
+        /*
+         * Pass wall_error as measurement; setpoint = 0.
+         * PID internal error = 0 - wall_error = -wall_error.
+         * pid_out > 0 when too close to right → speed_l up, speed_r down → steers left ✓
+         * pid_out < 0 when too close to left  → speed_l down, speed_r up → steers right ✓
+         */
+        float pid_out = PID_Compute(&pid_center, 0.0f, wall_error, dt);
 
-        if (speed_l > 100) speed_l = 100;
-        if (speed_l < 0)   speed_l = 0;
-        if (speed_r > 100) speed_r = 100;
-        if (speed_r < 0)   speed_r = 0;
+        int speed_l = (int)g_base_speed + (int)pid_out + g_left_trim;
+        int speed_r = (int)g_base_speed - (int)pid_out;
+
+        speed_l = (speed_l > 100) ? 100 : (speed_l < 0) ? 0 : speed_l;
+        speed_r = (speed_r > 100) ? 100 : (speed_r < 0) ? 0 : speed_r;
 
         L298N_Move(&motor_driver, MOTOR_LEFT,  MOTOR_FORWARD, (uint8_t)speed_l);
         L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, (uint8_t)speed_r);
 
         printf("[FSM] FWD | L:%.1f R:%.1f Err:%.1f PID:%.2f L:%d R:%d MB:%.1f\r\n",
-               filt_left, filt_right, wall_error, pid_out, speed_l, speed_r, margin);
+               g_filt_left, g_filt_right, wall_error, pid_out,
+               speed_l, speed_r, margin);
     }
 
     /* Loop rate ~120ms from three 40ms sensor delays */
