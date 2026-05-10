@@ -87,8 +87,8 @@ set(SOURCES
     #   src/pwm_wifi_test_main.c
       src/imu_main.c                 #- IMU (MPU6050) test
     #   src/wifi_stability_test_main.c - WiFi-only stability stress test (cap A/B)
-    # src/wifi_stability_test_main.c
-    # src/esp_ring.c
+    src/main.c
+    src/esp_ring.c
     src/l298n.c
     src/hc_sr04.c
     src/ir_sensor.c
