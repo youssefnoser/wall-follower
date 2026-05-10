@@ -39,7 +39,7 @@
  * saturate. Tune to ~half corridor width. */
 #define SENSITIVITY 20.0f
 /* Speed floor used by error-coupled base-speed blending near walls. */
-#define SPEED_FLOOR 22
+#define SPEED_FLOOR 35
 
 /* Per-side multiplicative PWM scale factors (float, positive).
  *
@@ -405,7 +405,7 @@ int main(void) {
        *   raw_l = effective_base - pid_out → speed_l = raw_l * left_factor
        *   raw_r = effective_base + pid_out → speed_r = raw_r * right_factor
        */
-      float wall_error = g_filt_left - g_filt_right;
+      float wall_error = g_filt_right - g_filt_left;
       if (wall_error > -margin && wall_error < margin)
         wall_error = 0.0f;
 
@@ -416,8 +416,8 @@ int main(void) {
       if (t > 1.0f)
         t = 1.0f;
 
-      float effective_base = (float)g_base_speed * (1.0f - t) +
-                             (float)SPEED_FLOOR * t;
+      float effective_base =
+          (float)g_base_speed * (1.0f - t) + (float)SPEED_FLOOR * t;
 
       /* Nonlinear error compression: small errors pass through, large
        * errors smoothly saturate so PID output cannot grow unbounded. */
@@ -438,7 +438,7 @@ int main(void) {
       printf("[FSM] FWD | L:%.1f R:%.1f Err:%.1f PID:%.2f "
              "PWM_L:%d PWM_R:%d MB:%.1f BASE:%d\r\n",
              g_filt_left, g_filt_right, wall_error, pid_out, speed_l, speed_r,
-              margin, (int)effective_base);
+             margin, (int)effective_base);
     }
 
     /* Loop rate ~120 ms from three 40 ms sensor delays */
