@@ -18,7 +18,7 @@ import sys
 DEFAULT_PORT = 1234
 RECV_TIMEOUT = 2.0  # seconds to wait for an ACK
 
-
+# PID=-1.3,0.0,-1.2
 # ---------------------------------------------------------------------------
 # Preset tuning sequences – send these in order while watching the robot
 # ---------------------------------------------------------------------------
