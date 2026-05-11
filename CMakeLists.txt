@@ -81,13 +81,10 @@ endif()
 
 #  Executable 
 set(SOURCES
-    # Active main: pick exactly one.
     src/main.c
-    # src/imu_turn_test_main.c
     src/esp_ring.c
     src/l298n.c
     src/hc_sr04.c
-    src/ir_sensor.c
     src/mpu6050.c
     src/ESP8266.c
     src/dwt_stm32_delay.c
