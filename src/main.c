@@ -42,6 +42,9 @@
 
 #define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
+/* ---- Open-space confirmation ----------------------------------------- */
+#define OPEN_CONFIRM_THRESH 4 /* consecutive readings before turning   */
+
 /* ---- Wall-to-heading gain -------------------------------------------- */
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.5f
 
@@ -106,24 +109,24 @@ static char g_turn_log[MAX_TURN_LOG + 1] = {0};
 static uint8_t g_turn_count = 0;
 
 /* ---- Runtime-tunable copies of compile-time constants ---------------- */
-static float g_ema_alpha       = EMA_ALPHA;
-static float g_sensitivity     = SENSITIVITY;
-static int   g_speed_floor     = SPEED_FLOOR;
-static float g_front_decel_cm  = FRONT_DECEL_CM;
-static float g_front_stop_cm   = FRONT_STOP_CM;
-static float g_d_far_cm        = D_FAR_CM;
-static float g_open_wall_cm    = OPEN_WALL_CM;
+static float g_ema_alpha = EMA_ALPHA;
+static float g_sensitivity = SENSITIVITY;
+static int g_speed_floor = SPEED_FLOOR;
+static float g_front_decel_cm = FRONT_DECEL_CM;
+static float g_front_stop_cm = FRONT_STOP_CM;
+static float g_d_far_cm = D_FAR_CM;
+static float g_open_wall_cm = OPEN_WALL_CM;
 static float g_desired_wall_cm = DESIRED_WALL_CM;
-static float g_turn_kp         = TURN_Kp;
-static float g_turn_kd         = TURN_Kd;
-static int   g_turn_max_speed  = TURN_MAX_SPEED;
-static int   g_turn_min_speed  = TURN_MIN_SPEED;
-static float g_turn_stop_deg   = TURN_STOP_DEG;
-static uint32_t g_turn_timeout_ms  = TURN_TIMEOUT_MS;
-static float g_turn_approach_deg   = TURN_APPROACH_DEG;
-static int   g_turn_approach_max   = TURN_APPROACH_MAX;
-static int   g_turn_approach_min   = TURN_APPROACH_MIN;
-static float g_turn_angle_deg      = TURN_ANGLE_DEG;
+static float g_turn_kp = TURN_Kp;
+static float g_turn_kd = TURN_Kd;
+static int g_turn_max_speed = TURN_MAX_SPEED;
+static int g_turn_min_speed = TURN_MIN_SPEED;
+static float g_turn_stop_deg = TURN_STOP_DEG;
+static uint32_t g_turn_timeout_ms = TURN_TIMEOUT_MS;
+static float g_turn_approach_deg = TURN_APPROACH_DEG;
+static int g_turn_approach_max = TURN_APPROACH_MAX;
+static int g_turn_approach_min = TURN_APPROACH_MIN;
+static float g_turn_angle_deg = TURN_ANGLE_DEG;
 
 static void turn_log_append(char dir) {
   if (g_turn_count < MAX_TURN_LOG) {
@@ -133,8 +136,7 @@ static void turn_log_append(char dir) {
 }
 
 static bool is_open_space(void) {
-  return (g_dist_front > g_d_far_cm &&
-          g_filt_left  > g_d_far_cm &&
+  return (g_dist_front > g_d_far_cm && g_filt_left > g_d_far_cm &&
           g_filt_right > g_d_far_cm);
 }
 
@@ -244,6 +246,14 @@ static void sensor_acquire(float *out_front, float *out_left,
  * does not interfere. After completion g_target_angle is updated so
  * corridor-centering resumes from the new heading with no jump.
  * --------------------------------------------------------------------- */
+/* -----------------------------------------------------------------------
+ * snap_to_cardinal – round to nearest 90° axis before adding turn delta.
+ * Absorbs any drift/collision offset so turns always land on the grid.
+ * --------------------------------------------------------------------- */
+static float snap_to_cardinal(float angle) {
+  return roundf(angle / 90.0f) * 90.0f;
+}
+
 static void do_turn(float delta_deg) {
   if (fabsf(delta_deg) < 1.0f) {
     printf("[TURN] delta too small, skipped\r\n");
@@ -251,9 +261,10 @@ static void do_turn(float delta_deg) {
   }
 
   MPU6050_UpdateAngle(&imu);
-  float target = imu.angle_z + delta_deg;
-  printf("[TURN] start=%.1f  target=%.1f  delta=%.1f\r\n", imu.angle_z, target,
-         delta_deg);
+  float snapped = snap_to_cardinal(imu.angle_z);
+  float target = snapped + delta_deg;
+  printf("[TURN] start=%.1f  snapped=%.1f  target=%.1f  delta=%.1f\r\n",
+         imu.angle_z, snapped, target, delta_deg);
 
   uint32_t t_start = HAL_GetTick();
   uint32_t last_print = t_start;
@@ -431,13 +442,15 @@ static void poll_wifi(float *margin, uint8_t *running) {
           float f = strtof(payload + 5, NULL);
           if (f > 0.0f)
             g_front_decel_cm = f;
-          alen = snprintf(ack, sizeof(ack), "OK FDEC=%.2f\r\n", g_front_decel_cm);
+          alen =
+              snprintf(ack, sizeof(ack), "OK FDEC=%.2f\r\n", g_front_decel_cm);
 
         } else if (strncmp(payload, "FSTOP=", 6) == 0) {
           float f = strtof(payload + 6, NULL);
           if (f > 0.0f)
             g_front_stop_cm = f;
-          alen = snprintf(ack, sizeof(ack), "OK FSTOP=%.2f\r\n", g_front_stop_cm);
+          alen =
+              snprintf(ack, sizeof(ack), "OK FSTOP=%.2f\r\n", g_front_stop_cm);
 
         } else if (strncmp(payload, "DFAR=", 5) == 0) {
           float f = strtof(payload + 5, NULL);
@@ -449,13 +462,15 @@ static void poll_wifi(float *margin, uint8_t *running) {
           float f = strtof(payload + 7, NULL);
           if (f > 0.0f)
             g_open_wall_cm = f;
-          alen = snprintf(ack, sizeof(ack), "OK OPWALL=%.2f\r\n", g_open_wall_cm);
+          alen =
+              snprintf(ack, sizeof(ack), "OK OPWALL=%.2f\r\n", g_open_wall_cm);
 
         } else if (strncmp(payload, "DWALL=", 6) == 0) {
           float f = strtof(payload + 6, NULL);
           if (f > 0.0f)
             g_desired_wall_cm = f;
-          alen = snprintf(ack, sizeof(ack), "OK DWALL=%.2f\r\n", g_desired_wall_cm);
+          alen = snprintf(ack, sizeof(ack), "OK DWALL=%.2f\r\n",
+                          g_desired_wall_cm);
 
         } else if (strncmp(payload, "TKP=", 4) == 0) {
           float f = strtof(payload + 4, NULL);
@@ -473,49 +488,57 @@ static void poll_wifi(float *margin, uint8_t *running) {
           int v = (int)strtof(payload + 8, NULL);
           if (v > 0 && v <= 100)
             g_turn_max_speed = v;
-          alen = snprintf(ack, sizeof(ack), "OK TMAXSPD=%d\r\n", g_turn_max_speed);
+          alen =
+              snprintf(ack, sizeof(ack), "OK TMAXSPD=%d\r\n", g_turn_max_speed);
 
         } else if (strncmp(payload, "TMINSPD=", 8) == 0) {
           int v = (int)strtof(payload + 8, NULL);
           if (v >= 0 && v <= 100)
             g_turn_min_speed = v;
-          alen = snprintf(ack, sizeof(ack), "OK TMINSPD=%d\r\n", g_turn_min_speed);
+          alen =
+              snprintf(ack, sizeof(ack), "OK TMINSPD=%d\r\n", g_turn_min_speed);
 
         } else if (strncmp(payload, "TSTOP=", 6) == 0) {
           float f = strtof(payload + 6, NULL);
           if (f > 0.0f)
             g_turn_stop_deg = f;
-          alen = snprintf(ack, sizeof(ack), "OK TSTOP=%.2f\r\n", g_turn_stop_deg);
+          alen =
+              snprintf(ack, sizeof(ack), "OK TSTOP=%.2f\r\n", g_turn_stop_deg);
 
         } else if (strncmp(payload, "TTOUT=", 6) == 0) {
           int v = (int)strtof(payload + 6, NULL);
           if (v > 0)
             g_turn_timeout_ms = (uint32_t)v;
-          alen = snprintf(ack, sizeof(ack), "OK TTOUT=%lu\r\n", g_turn_timeout_ms);
+          alen =
+              snprintf(ack, sizeof(ack), "OK TTOUT=%lu\r\n", g_turn_timeout_ms);
 
         } else if (strncmp(payload, "TAPPDEG=", 8) == 0) {
           float f = strtof(payload + 8, NULL);
           if (f > 0.0f)
             g_turn_approach_deg = f;
-          alen = snprintf(ack, sizeof(ack), "OK TAPPDEG=%.2f\r\n", g_turn_approach_deg);
+          alen = snprintf(ack, sizeof(ack), "OK TAPPDEG=%.2f\r\n",
+                          g_turn_approach_deg);
 
         } else if (strncmp(payload, "TAPPMAX=", 8) == 0) {
           int v = (int)strtof(payload + 8, NULL);
           if (v > 0 && v <= 100)
             g_turn_approach_max = v;
-          alen = snprintf(ack, sizeof(ack), "OK TAPPMAX=%d\r\n", g_turn_approach_max);
+          alen = snprintf(ack, sizeof(ack), "OK TAPPMAX=%d\r\n",
+                          g_turn_approach_max);
 
         } else if (strncmp(payload, "TAPPMIN=", 8) == 0) {
           int v = (int)strtof(payload + 8, NULL);
           if (v >= 0 && v <= 100)
             g_turn_approach_min = v;
-          alen = snprintf(ack, sizeof(ack), "OK TAPPMIN=%d\r\n", g_turn_approach_min);
+          alen = snprintf(ack, sizeof(ack), "OK TAPPMIN=%d\r\n",
+                          g_turn_approach_min);
 
         } else if (strncmp(payload, "TANG=", 5) == 0) {
           float f = strtof(payload + 5, NULL);
           if (f > 0.0f)
             g_turn_angle_deg = f;
-          alen = snprintf(ack, sizeof(ack), "OK TANG=%.2f\r\n", g_turn_angle_deg);
+          alen =
+              snprintf(ack, sizeof(ack), "OK TANG=%.2f\r\n", g_turn_angle_deg);
 
         } else if (strncmp(payload, "MB=", 3) == 0) {
           float mb = strtof(payload + 3, NULL);
@@ -541,43 +564,38 @@ static void poll_wifi(float *margin, uint8_t *running) {
                           "L=%.1f F=%.1f R=%.1f "
                           "ANG=%.1f TGT=%.1f "
                           "RUN=%d TCNT=%d TSEQ=%s\r\n",
-                          g_filt_left, g_dist_front, g_filt_right,
-                          imu.angle_z, g_target_angle,
-                          (int)g_running,
-                          (int)g_turn_count,
+                          g_filt_left, g_dist_front, g_filt_right, imu.angle_z,
+                          g_target_angle, (int)g_running, (int)g_turn_count,
                           g_turn_count ? g_turn_log : "-");
 
-        } else if (strncmp(payload, "STATUS",6) == 0) {
-          alen =
-              snprintf(ack, sizeof(ack),
-                       "WG=%.3f HKP=%.3f HKD=%.3f "
-                       "MB=%.2f SPD=%d "
-                       "LFAC=%.3f RFAC=%.3f "
-                       "ANG=%.1f TGT=%.1f "
-                       "RUN=%d STATE=%d "
-                       "TCNT=%d TSEQ=%s "
-                       "L=%.1f F=%.1f R=%.1f "
-                       "EMA=%.3f SENS=%.3f SFLOOR=%d "
-                       "FDEC=%.2f FSTOP=%.2f "
-                       "DFAR=%.2f OPWALL=%.2f DWALL=%.2f "
-                       "TKP=%.3f TKD=%.3f "
-                       "TMAXSPD=%d TMINSPD=%d "
-                       "TSTOP=%.2f TTOUT=%lu "
-                       "TAPPDEG=%.2f TAPPMAX=%d TAPPMIN=%d "
-                       "TANG=%.2f\r\n",
-                       g_wall_gain, g_heading_Kp, g_heading_Kd, *margin,
-                       g_base_speed, g_left_factor, g_right_factor, imu.angle_z,
-                       g_target_angle, (int)*running, (int)g_state,
-                       (int)g_turn_count, g_turn_count ? g_turn_log : "-",
-                       g_filt_left, g_dist_front, g_filt_right,
-                       g_ema_alpha, g_sensitivity, g_speed_floor,
-                       g_front_decel_cm, g_front_stop_cm,
-                       g_d_far_cm, g_open_wall_cm, g_desired_wall_cm,
-                       g_turn_kp, g_turn_kd,
-                       g_turn_max_speed, g_turn_min_speed,
-                       g_turn_stop_deg, g_turn_timeout_ms,
-                       g_turn_approach_deg, g_turn_approach_max, g_turn_approach_min,
-                       g_turn_angle_deg);
+        } else if (strncmp(payload, "STATUS", 6) == 0) {
+          alen = snprintf(
+              ack, sizeof(ack),
+              "WG=%.3f HKP=%.3f HKD=%.3f "
+              "MB=%.2f SPD=%d "
+              "LFAC=%.3f RFAC=%.3f "
+              "ANG=%.1f TGT=%.1f "
+              "RUN=%d STATE=%d "
+              "TCNT=%d TSEQ=%s "
+              "L=%.1f F=%.1f R=%.1f "
+              "EMA=%.3f SENS=%.3f SFLOOR=%d "
+              "FDEC=%.2f FSTOP=%.2f "
+              "DFAR=%.2f OPWALL=%.2f DWALL=%.2f "
+              "TKP=%.3f TKD=%.3f "
+              "TMAXSPD=%d TMINSPD=%d "
+              "TSTOP=%.2f TTOUT=%lu "
+              "TAPPDEG=%.2f TAPPMAX=%d TAPPMIN=%d "
+              "TANG=%.2f\r\n",
+              g_wall_gain, g_heading_Kp, g_heading_Kd, *margin, g_base_speed,
+              g_left_factor, g_right_factor, imu.angle_z, g_target_angle,
+              (int)*running, (int)g_state, (int)g_turn_count,
+              g_turn_count ? g_turn_log : "-", g_filt_left, g_dist_front,
+              g_filt_right, g_ema_alpha, g_sensitivity, g_speed_floor,
+              g_front_decel_cm, g_front_stop_cm, g_d_far_cm, g_open_wall_cm,
+              g_desired_wall_cm, g_turn_kp, g_turn_kd, g_turn_max_speed,
+              g_turn_min_speed, g_turn_stop_deg, g_turn_timeout_ms,
+              g_turn_approach_deg, g_turn_approach_max, g_turn_approach_min,
+              g_turn_angle_deg);
 
         } else if (strncmp(payload, "CLRTURNS", 8) == 0) {
           memset(g_turn_log, 0, sizeof(g_turn_log));
@@ -680,7 +698,8 @@ int main(void) {
   printf("[IMU] offset=%.4f\r\n", imu.gyro_z_offset);
 
   float margin = CENTER_MARGIN_CM;
-  uint8_t running = 1;
+  uint8_t running = 0; /* wait for GO/AUTO over WiFi */
+  g_state = STATE_IDLE;
 
   imu.last_time = HAL_GetTick();
   g_target_angle = imu.angle_z;
@@ -703,7 +722,8 @@ int main(void) {
     poll_wifi(&margin, &running);
 
     g_filt_left = g_ema_alpha * dist_left + (1.0f - g_ema_alpha) * g_filt_left;
-    g_filt_right = g_ema_alpha * dist_right + (1.0f - g_ema_alpha) * g_filt_right;
+    g_filt_right =
+        g_ema_alpha * dist_right + (1.0f - g_ema_alpha) * g_filt_right;
 
     g_running = running;
 
@@ -812,13 +832,20 @@ int main(void) {
          * 1. If in DECEL zone and we see a side opening, take it.
          * 2. If we hit STOP zone, stop and evaluate (turn or dead-end).
          */
+        static uint8_t open_confirm = 0;
         int8_t potential_dir = choose_turn(g_filt_left, g_filt_right);
-        bool should_turn_early =
 
-            (g_dist_front < g_front_decel_cm && potential_dir != 0);
+        if (g_dist_front < g_front_decel_cm && potential_dir != 0) {
+          open_confirm++;
+        } else {
+          open_confirm = 0; /* not consistently open — reset */
+        }
+
+        bool should_turn_early = (open_confirm >= OPEN_CONFIRM_THRESH);
         bool must_stop_now = (g_dist_front < g_front_stop_cm);
 
         if (should_turn_early || must_stop_now) {
+          open_confirm = 0; /* consumed — reset for next junction */
           L298N_StopAll(&motor_driver);
           HAL_Delay(80); /* chassis settle */
 
