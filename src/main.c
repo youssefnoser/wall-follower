@@ -15,31 +15,34 @@
 
 /* ---- Corridor-centering tuning --------------------------------------- */
 #define CENTER_MARGIN_CM 2.0f /* dead-band around wall_error = 0       */
-#define BASE_SPEED 42         /* nominal forward PWM %                 */
-#define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing              */
-#define SENSITIVITY 20.0f     /* wall-error tanh knee (cm)             */
-#define SPEED_FLOOR 30        /* min PWM % while doing wall correction */
+#define BASE_SPEED 55         /* nominal forward PWM % (was 42)         */
+#define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing               */
+#define SENSITIVITY 20.0f     /* tanh compression knee (cm)             */
+#define SPEED_FLOOR 35        /* min PWM % while doing wall correction  */
 
-/* ---- Front-approach speed ramp --------------------------------------- *
- *                                                                         *
- *   dist >= FRONT_SLOW_CM  →  full speed (no front influence)             *
- *   dist == FRONT_STOP_CM  →  speed = 0  (fully stopped)                 *
- *   dist <  FRONT_STOP_CM  →  0 (clamped) — turn logic evaluates L/R     *
- *                                                                         *
- * The ramp multiplies the wall-error-scaled base speed, so both causes   *
- * of slowdown compound naturally. No discrete stop command is needed:    *
- * when effective_base reaches 0, gyro_tick() writes 0 PWM to the motors. */
-#define FRONT_SLOW_CM 60.0f /* begin ramping at this distance        */
-#define FRONT_STOP_CM 25.0f /* fully stopped at this distance        */
+/* ---- Front-obstacle threshold ---------------------------------------- *
+ * When front dist drops below this, stop and evaluate L/R for a turn.   *
+ * No ramp — just a clean threshold so the robot actually commits.        */
+#define FRONT_OBSTACLE_CM 28.0f
 
-/* ---- Turn / navigation ------------------------------------------------ */
-#define D_FAR_CM 30.0f          /* side dist > D_FAR → corridor open     */
-#define TURN_SPEED 38           /* PWM % during tank turn                */
-#define TURN_ANGLE_DEG 90.0f    /* rotation target magnitude             */
-#define TURN_TOLERANCE_DEG 3.0f /* acceptance window around target       */
-#define TURN_TIMEOUT_MS 4000    /* abort turn if IMU stalls              */
-#define OPEN_WALL_CM 20.0f      /* side dist above this → wall not present    */
-#define DESIRED_WALL_CM 15.0f   /* single-wall follow target (45cm-15cm)/2   */
+/* ---- Turn / navigation ----------------------------------------------- */
+#define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
+#define OPEN_WALL_CM 20.0f    /* side dist above this → wall not present */
+#define DESIRED_WALL_CM 15.0f /* single-wall follow target              */
+/* ---- Turn / navigation (PD) ------------------------------------------ */
+#define TURN_KP 7.0f
+#define TURN_KD 0.7f
+#define TURN_MAX_SPEED 70
+#define TURN_MIN_SPEED 35
+#define TURN_STOP_DEG 2.5f
+#define TURN_TIMEOUT_MS 6000
+
+/* Approach zone: when remaining drops below this, we slow down hard */
+#define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
+#define TURN_APPROACH_MAX 28    /* PWM ceiling inside slow zone (%)   */
+#define TURN_APPROACH_MIN 22    /* stiction floor inside slow zone    */
+
+#define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
 /* ---- Wall-to-heading gain -------------------------------------------- */
 #define WALL_TO_HEADING_GAIN_DEFAULT 0.4f
@@ -74,11 +77,11 @@ void I2C_Init(void);
 
 /* ---- FSM states ------------------------------------------------------ */
 typedef enum {
-  STATE_IDLE,       /* stopped, waiting for GO                        */
-  STATE_FORWARD,    /* corridor-centering + front ramp-down           */
-  STATE_TURN_LEFT,  /* executing +90 tank turn (prefer this)          */
-  STATE_TURN_RIGHT, /* executing -90 tank turn                        */
-  STATE_DEAD_END,   /* both sides blocked — back up and retry         */
+  STATE_IDLE,       /* stopped, waiting for GO                         */
+  STATE_FORWARD,    /* corridor-centering + front obstacle check        */
+  STATE_TURN_LEFT,  /* executing +90 tank turn                         */
+  STATE_TURN_RIGHT, /* executing -90 tank turn                         */
+  STATE_DEAD_END,   /* both sides blocked — back up and retry          */
 } RobotState;
 
 /* ---- Runtime state --------------------------------------------------- */
@@ -86,7 +89,7 @@ static int8_t wifi_link = -1;
 static float g_dist_front = 200.0f;
 static float g_filt_left = 100.0f;
 static float g_filt_right = 100.0f;
-static uint8_t g_mode = 0; /* 0=AUTO  1=MANUAL           */
+static uint8_t g_mode = 0; /* 0=AUTO  1=MANUAL                 */
 static uint8_t g_manual_cmd = 0;
 static uint8_t g_base_speed = BASE_SPEED;
 static float g_left_factor = LEFT_MOTOR_FACTOR;
@@ -103,39 +106,53 @@ static float g_target_angle = 0.0f;
 /* FSM */
 static RobotState g_state = STATE_FORWARD;
 
-/* -----------------------------------------------------------------------
- * apply_factor – scale raw PWM by per-motor factor and clamp to [0,100]
- * --------------------------------------------------------------------- */
-static inline uint8_t apply_factor(float raw, float factor) {
-  int v = (int)(raw * factor);
+static void apply_motor(uint8_t motor, int pct) {
+  float factor = (motor == MOTOR_LEFT) ? g_left_factor : g_right_factor;
+  int v = (int)((float)pct * factor);
+
   if (v > 100)
     v = 100;
-  if (v < 0)
-    v = 0;
-  return (uint8_t)v;
+  if (v < -100)
+    v = -100;
+
+  if (v == 0) {
+    L298N_Stop(&motor_driver, motor);
+    return;
+  }
+
+  uint8_t dir = (v > 0) ? MOTOR_FORWARD : MOTOR_BACKWARD;
+  uint8_t speed = (uint8_t)(v > 0 ? v : -v);
+  L298N_Move(&motor_driver, motor, dir, speed);
 }
 
 /* -----------------------------------------------------------------------
- * front_scale – maps front distance to a speed multiplier in [0.0, 1.0].
- *
- *   dist >= FRONT_SLOW_CM  → 1.0  (full speed, no front influence)
- *   dist == FRONT_STOP_CM  → 0.0  (completely stopped)
- *   dist <  FRONT_STOP_CM  → 0.0  (clamped — turn logic takes over)
+ * move_forward – drive both motors forward at the given percentage.
  * --------------------------------------------------------------------- */
-static float front_scale(float dist_front) {
-  if (dist_front >= FRONT_SLOW_CM)
-    return 1.0f;
-  if (dist_front <= FRONT_STOP_CM)
-    return 0.0f;
-  return (dist_front - FRONT_STOP_CM) / (FRONT_SLOW_CM - FRONT_STOP_CM);
+static void move_forward(int pct) {
+  apply_motor(MOTOR_LEFT, pct);
+  apply_motor(MOTOR_RIGHT, pct);
 }
+
+/* -----------------------------------------------------------------------
+ * move_backward – drive both motors backward at the given percentage.
+ * --------------------------------------------------------------------- */
+static void move_backward(int pct) {
+  apply_motor(MOTOR_LEFT, -pct);
+  apply_motor(MOTOR_RIGHT, -pct);
+}
+
+/* -----------------------------------------------------------------------
+ * stop_motors – halt both motors immediately.
+ * --------------------------------------------------------------------- */
+static void stop_motors(void) { L298N_StopAll(&motor_driver); }
 
 /* -----------------------------------------------------------------------
  * gyro_tick – heading-hold PD inner loop, called every 5 ms.
  *
- * Only active in STATE_FORWARD. g_current_base already incorporates
- * the front ramp, so when the front wall is close enough, this
- * naturally writes 0 PWM — the robot stops without a separate call.
+ * Only active in STATE_FORWARD — cannot interfere with turns.
+ * g_target_angle is set each main-loop iteration from the wall error:
+ *   Centered  → target ≈ current angle → drive straight
+ *   Off-center → target biased inward  → gentle arc back to center
  * --------------------------------------------------------------------- */
 static void gyro_tick(void) {
   if (!(g_running && g_mode == 0 && g_state == STATE_FORWARD))
@@ -150,16 +167,13 @@ static void gyro_tick(void) {
   float raw_l = g_current_base - corr;
   float raw_r = g_current_base + corr;
 
-  L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD,
-             apply_factor(raw_l, g_left_factor));
-  L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD,
-             apply_factor(raw_r, g_right_factor));
+  apply_motor(MOTOR_LEFT, (int)raw_l);
+  apply_motor(MOTOR_RIGHT, (int)raw_r);
 }
 
 /* -----------------------------------------------------------------------
  * sensor_acquire – fire all 3 ultrasonics sequentially.
- * gyro_tick() runs every 5 ms during each echo wait so heading
- * correction and front-ramp deceleration continue throughout.
+ * gyro_tick() runs every 5 ms during each echo wait.
  * --------------------------------------------------------------------- */
 #define US_TIMEOUT_MS 40
 #define GYRO_PERIOD_MS 5
@@ -172,7 +186,6 @@ static void sensor_acquire(float *out_front, float *out_left,
   for (int i = 0; i < 3; i++) {
     HC_SR04_StartMeasurement(sensors[i]);
     uint32_t t0 = HAL_GetTick();
-
     while (!HC_SR04_IsDone(sensors[i])) {
       if ((HAL_GetTick() - t0) >= US_TIMEOUT_MS)
         break;
@@ -192,55 +205,100 @@ static void sensor_acquire(float *out_front, float *out_left,
  *   delta_deg > 0 → LEFT  (CCW: left motor backward, right forward)
  *   delta_deg < 0 → RIGHT (CW:  left motor forward,  right backward)
  *
- * gyro_tick() cannot interfere because g_state != STATE_FORWARD during
- * this call. After completion, g_target_angle is updated so corridor-
- * centering resumes from the new heading with no jump.
+ * g_state must be STATE_TURN_LEFT/RIGHT before calling so gyro_tick()
+ * does not interfere. After completion g_target_angle is updated so
+ * corridor-centering resumes from the new heading with no jump.
  * --------------------------------------------------------------------- */
 static void do_turn(float delta_deg) {
+  if (fabsf(delta_deg) < 1.0f) {
+    printf("[TURN] delta too small, skipped\r\n");
+    return;
+  }
+
   MPU6050_UpdateAngle(&imu);
   float target = imu.angle_z + delta_deg;
+  printf("[TURN] start=%.1f  target=%.1f  delta=%.1f\r\n", imu.angle_z, target,
+         delta_deg);
 
-  printf("[TURN] start=%.1f  target=%.1f\r\n", imu.angle_z, target);
-
-  uint32_t t0 = HAL_GetTick();
+  uint32_t t_start = HAL_GetTick();
+  uint32_t last_print = t_start;
 
   while (1) {
     MPU6050_UpdateAngle(&imu);
-    float remaining = target - imu.angle_z;
 
-    if (fabsf(remaining) < TURN_TOLERANCE_DEG)
+    float remaining = target - imu.angle_z;        /* signed error  */
+    float rate_z = imu.gyro.z - imu.gyro_z_offset; /* signed deg/s  */
+
+    /* PD output: Positive → CCW (left backward, right forward) */
+    float output = TURN_KP * remaining - TURN_KD * rate_z;
+
+    /* Done when error is small AND the car has stopped rotating */
+    if (fabsf(remaining) <= TURN_STOP_DEG && fabsf(rate_z) < 15.0f)
       break;
-    if ((HAL_GetTick() - t0) > TURN_TIMEOUT_MS) {
-      printf("[TURN] timeout\r\n");
+
+    if ((HAL_GetTick() - t_start) >= TURN_TIMEOUT_MS) {
+      printf("[TURN] TIMEOUT\r\n");
       break;
     }
 
-    if (delta_deg > 0.0f) {
-      /* Left / CCW */
-      L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, TURN_SPEED);
-      L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, TURN_SPEED);
-    } else {
-      /* Right / CW */
-      L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, TURN_SPEED);
-      L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, TURN_SPEED);
+    /* Approach zone: soften limits when close */
+    bool approaching = (fabsf(remaining) < TURN_APPROACH_DEG);
+    int max_spd = approaching ? TURN_APPROACH_MAX : TURN_MAX_SPEED;
+    int min_spd = approaching ? TURN_APPROACH_MIN : TURN_MIN_SPEED;
+
+    float abs_out = fabsf(output);
+
+    /* Stiction floor — only when output agrees with error direction */
+    if (abs_out < min_spd) {
+      bool pushing_toward = (output > 0.0f && remaining > 0.0f) ||
+                            (output < 0.0f && remaining < 0.0f);
+      if (pushing_toward)
+        abs_out = min_spd;
+    }
+
+    if (abs_out > max_spd)
+      abs_out = max_spd;
+
+    int spd = (output >= 0.0f) ? (int)abs_out : -(int)abs_out;
+
+    /* Tank spin: left opposite of right */
+    apply_motor(MOTOR_LEFT, -spd);
+    apply_motor(MOTOR_RIGHT, spd);
+
+    if (HAL_GetTick() - last_print >= 100) {
+      last_print = HAL_GetTick();
+      printf("[TURN] angle=%+7.2f rem=%+6.2f out=%.1f rate=%.1f\r\n",
+             imu.angle_z, remaining, output, rate_z);
     }
     HAL_Delay(5);
   }
 
-  L298N_StopAll(&motor_driver);
-  HAL_Delay(150); /* mechanical settle             */
+  /* Active hold-in-place brake pulse to kill cable tension snap-back */
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN1_PORT,
+                    motor_driver.motor_left.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_left.IN2_PORT,
+                    motor_driver.motor_left.IN2_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN1_PORT,
+                    motor_driver.motor_right.IN1_PIN, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(motor_driver.motor_right.IN2_PORT,
+                    motor_driver.motor_right.IN2_PIN, GPIO_PIN_SET);
+  L298N_SetSpeed(&motor_driver, MOTOR_LEFT, 100);
+  L298N_SetSpeed(&motor_driver, MOTOR_RIGHT, 100);
+  HAL_Delay(60);
 
+  L298N_StopAll(&motor_driver);
+  HAL_Delay(60);
   MPU6050_UpdateAngle(&imu);
-  g_target_angle = imu.angle_z; /* corridor-centering resumes    */
-  printf("[TURN] done=%.1f\r\n", imu.angle_z);
+
+  g_target_angle = imu.angle_z; /* resume corridor-centering from here */
+  float error = imu.angle_z - target;
+  printf("[TURN] done final=%+.2f target=%+.2f error=%+.2f\r\n", imu.angle_z,
+         target, error);
 }
 
 /* -----------------------------------------------------------------------
- * choose_turn – left-preference turn decision at a dead end.
- *
- * Returns:  +1 = turn left   (left side open)
- *           -1 = turn right  (left blocked, right open)
- *            0 = dead end    (both blocked)
+ * choose_turn – left-preference turn decision.
+ *   +1 = turn left   -1 = turn right   0 = dead end
  * --------------------------------------------------------------------- */
 static int8_t choose_turn(float dist_left, float dist_right) {
   if (dist_left > D_FAR_CM)
@@ -360,7 +418,6 @@ static void poll_wifi(float *margin, uint8_t *running) {
           g_mode = 0;
           *running = 1;
           g_state = STATE_FORWARD;
-
           alen = snprintf(ack, sizeof(ack), "OK AUTO\r\n");
 
         } else if (strncmp(payload, "FWD", 3) == 0) {
@@ -461,7 +518,8 @@ int main(void) {
       led_last = now;
     }
 
-    /* Acquire sensors; gyro_tick() runs inside during STATE_FORWARD */
+    /* Acquire sensors; gyro_tick() fires every 5 ms inside (STATE_FORWARD only)
+     */
     float dist_left, dist_right;
     sensor_acquire(&g_dist_front, &dist_left, &dist_right);
 
@@ -483,116 +541,93 @@ int main(void) {
       g_state = STATE_IDLE;
 
     } else if (g_mode == 1) {
-      /* ---- MANUAL mode ----------------------------------------- */
-      uint8_t ml = apply_factor((float)g_base_speed, g_left_factor);
-      uint8_t mr = apply_factor((float)g_base_speed, g_right_factor);
+      /* ---- MANUAL -------------------------------------------- */
       switch (g_manual_cmd) {
       case 1:
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, ml);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, mr);
+        move_forward(g_base_speed);
         break;
       case 2:
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, ml);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, mr);
+        move_backward(g_base_speed);
         break;
       case 3:
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, 0);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, mr);
+        apply_motor(MOTOR_LEFT, -g_base_speed);
+        apply_motor(MOTOR_RIGHT, g_base_speed);
         break;
       case 4:
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD, ml);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD, 0);
+        apply_motor(MOTOR_LEFT, g_base_speed);
+        apply_motor(MOTOR_RIGHT, -g_base_speed);
         break;
       default:
-        L298N_StopAll(&motor_driver);
+        stop_motors();
         break;
       }
 
     } else {
-      /* ---- AUTO FSM -------------------------------------------- */
+      /* ---- AUTO FSM ------------------------------------------ */
       switch (g_state) {
 
-      /* ---------------------------------------------------------- */
+      /* -------------------------------------------------------- */
       case STATE_IDLE:
         L298N_StopAll(&motor_driver);
         break;
 
-      /* ---------------------------------------------------------- */
+      /* -------------------------------------------------------- */
       case STATE_FORWARD: {
         /*
-         * Speed = wall_base * fscale
-         *
-         * wall_base: reduced when off-center (avoids correcting
-         *            at full speed into a wall).
-         *
-         * fscale:    [1.0 → 0.0] as front wall approaches from
-         *            FRONT_SLOW_CM down to FRONT_STOP_CM.
-         *            When fscale == 0.0 the robot has fully stopped
-         *            and we evaluate L/R to take a turn.
-         *
-         * No explicit L298N_StopAll() call — gyro_tick writes 0 PWM
-         * when effective_base == 0, which stops the motors cleanly
-         * through the same path as normal forward motion.
+         * Wall-error: single-wall aware.
+         *   Both walls present → center between them.
+         *   One wall missing  → maintain DESIRED_WALL_CM from the
+         *                       visible wall.
+         *   Both missing      → go straight (error = 0).
          */
-
-        /* 1. Wall-error lateral scaling — single-wall aware */
         float wall_error;
         uint8_t left_open = (g_filt_left > OPEN_WALL_CM);
         uint8_t right_open = (g_filt_right > OPEN_WALL_CM);
 
         if (!left_open && !right_open) {
-          wall_error = g_filt_right - g_filt_left; /* center in corridor    */
+          wall_error = g_filt_right - g_filt_left;
         } else if (!right_open) {
-          wall_error = DESIRED_WALL_CM - g_filt_right; /* only right visible */
+          wall_error = DESIRED_WALL_CM - g_filt_right;
         } else if (!left_open) {
-          wall_error = g_filt_left - DESIRED_WALL_CM; /* only left visible    */
+          wall_error = g_filt_left - DESIRED_WALL_CM;
         } else {
-          wall_error = 0.0f; /* both lost: go straight*/
+          wall_error = 0.0f;
         }
 
         if (wall_error > -margin && wall_error < margin)
           wall_error = 0.0f;
 
+        /* Speed: reduce proportionally to wall error magnitude */
         float abs_err = fabsf(wall_error);
         float t = abs_err / SENSITIVITY;
         if (t > 1.0f)
           t = 1.0f;
-        float wall_base =
+        float effective_base =
             (float)g_base_speed * (1.0f - t) + (float)SPEED_FLOOR * t;
 
-        /* 2. Front-approach scaling */
-        float fscale = front_scale(g_dist_front);
-        float effective_base = wall_base * fscale;
-
-        /* 3. Heading target from wall error */
+        /* Heading target: tanh-compressed wall error → degrees */
         float compressed = SENSITIVITY * tanhf(wall_error / SENSITIVITY);
         g_target_angle = imu.angle_z + compressed * g_wall_gain;
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
         printf("[FSM] FWD | L:%.1f R:%.1f F:%.1f "
-               "Err:%.1f FS:%.2f TGT:%.1f ANG:%.1f BASE:%d\r\n",
-               g_filt_left, g_filt_right, g_dist_front, wall_error, fscale,
+               "Err:%.1f TGT:%.1f ANG:%.1f BASE:%d\r\n",
+               g_filt_left, g_filt_right, g_dist_front, wall_error,
                g_target_angle, imu.angle_z, (int)effective_base);
 
         /*
-         * Turn evaluation: only when the robot has come to a
-         * complete stop due to the front ramp (fscale == 0),
-         * or IR trips. Never pre-emptively — the ramp handles
-         * the deceleration and we read L/R at rest.
+         * Turn evaluation: front blocked or IR tripped.
+         * Decide L/R from the EMA-filtered side readings.
          */
-        if (fscale <= 0.0f || !ir_safe) {
-          /* Motors are already at 0 PWM via gyro_tick().
-           * Explicit stop here ensures clean state before turn. */
+        if (g_dist_front < FRONT_OBSTACLE_CM || !ir_safe) {
           L298N_StopAll(&motor_driver);
-          HAL_Delay(80); /* let the chassis settle              */
+          HAL_Delay(80); /* chassis settle */
 
-          /* Fresh reading at rest (EMA already updated above)  */
           printf("[FSM] STOPPED | F:%.1f L:%.1f R:%.1f\r\n", g_dist_front,
                  g_filt_left, g_filt_right);
 
           int8_t dir = choose_turn(g_filt_left, g_filt_right);
-
           if (dir > 0) {
             printf("[FSM] → TURN_LEFT  (L=%.1f)\r\n", g_filt_left);
             g_state = STATE_TURN_LEFT;
@@ -607,7 +642,7 @@ int main(void) {
         break;
       }
 
-      /* ---------------------------------------------------------- */
+      /* -------------------------------------------------------- */
       case STATE_TURN_LEFT:
         do_turn(+TURN_ANGLE_DEG);
         { /* flush EMA with first real post-turn reading */
@@ -621,7 +656,7 @@ int main(void) {
         printf("[FSM] → FORWARD after left turn\r\n");
         break;
 
-      /* ---------------------------------------------------------- */
+      /* -------------------------------------------------------- */
       case STATE_TURN_RIGHT:
         do_turn(-TURN_ANGLE_DEG);
         {
@@ -635,16 +670,13 @@ int main(void) {
         printf("[FSM] → FORWARD after right turn\r\n");
         break;
 
-      /* ---------------------------------------------------------- */
+      /* -------------------------------------------------------- */
       case STATE_DEAD_END: {
         printf("[FSM] DEAD_END — backing up\r\n");
 
-        uint8_t ml = apply_factor((float)g_base_speed * 0.7f, g_left_factor);
-        uint8_t mr = apply_factor((float)g_base_speed * 0.7f, g_right_factor);
-        L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_BACKWARD, ml);
-        L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_BACKWARD, mr);
+        move_backward((int)((float)g_base_speed * 0.7f));
         HAL_Delay(400);
-        L298N_StopAll(&motor_driver);
+        stop_motors();
         HAL_Delay(100);
 
         float ff, fl, fr;
@@ -705,7 +737,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) { (void)GPIO_Pin; }
 
 void TIM3_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_front.htim); }
 void TIM4_IRQHandler(void) { HAL_TIM_IRQHandler(ultrasonic_left.htim); }
-
 void USART1_IRQHandler(void) { HAL_UART_IRQHandler(&_WIFI_USART); }
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
   if (huart->Instance == USART1)

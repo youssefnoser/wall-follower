@@ -46,11 +46,26 @@ class RobotState:
         self.data = {}
         self.derived = {}
         self.logs = deque(maxlen=LOG_MAX)
+        self.sensor_logs = deque(maxlen=100)
         self.connected = False
         self.last_update = 0
         self.ip = host
         self.lock = threading.Lock()
         self.app = None # To be set by main
+        self.log_file = None
+
+    def open_log(self, filename="tuner_session.log"):
+        with self.lock:
+            self.log_file = open(filename, "w", encoding="utf-8")
+            self.log_file.write(f"--- SESSION START: {datetime.now()} ---\n")
+            self.log_file.flush()
+
+    def close(self):
+        with self.lock:
+            if self.log_file:
+                self.log_file.write(f"--- SESSION END: {datetime.now()} ---\n")
+                self.log_file.close()
+                self.log_file = None
 
     def log(self, msg, type="info"):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -63,6 +78,10 @@ class RobotState:
         # Use rich tags for log storage
         with self.lock:
             self.logs.append(f"[{ts}] [{color}]{msg}[/{color}]")
+            # Write to file (clean)
+            if self.log_file:
+                self.log_file.write(f"[{ts}] [CMD:{type}] {msg}\n")
+                self.log_file.flush()
         
         if self.app:
             self.app.invalidate()
@@ -91,6 +110,19 @@ class RobotState:
         with self.lock:
             self.data.update(parsed)
             self.derive()
+            
+            # Log all parameters to file
+            ts = datetime.now().strftime("%H:%M:%S.%f")[:-4]
+            param_str = " ".join([f"{k}:{v}" for k, v in parsed.items()])
+            if self.log_file and param_str:
+                self.log_file.write(f"[{ts}] {param_str}\n")
+                self.log_file.flush()
+
+            # Update TUI sensor logs specifically for the sensors panel
+            if "L" in parsed and "R" in parsed and "F" in parsed:
+                log_msg = f"[{ts}] [blue]L:{parsed['L']:4.1f}[/] [cyan]R:{parsed['R']:4.1f}[/] [yellow]F:{parsed['F']:4.1f}[/]"
+                self.sensor_logs.append(log_msg)
+
             self.last_update = time.time()
             self.connected = True
         
@@ -218,16 +250,26 @@ def create_ui(state):
         
         return get_rich_console_content(full_panel, width=width)
 
-    # Log Control (Right)
+    # Command Log Control
     def get_log_content():
         width = log_window.render_info.window_width if log_window.render_info else 50
         if width < 30: width = 30
-        
         with state.lock:
             logs = list(state.logs)
-        
         log_text = "\n".join(logs)
         panel = Panel(log_text, title="[bold cyan]Command Log[/]", border_style="cyan", padding=(0,1), expand=True)
+        return get_rich_console_content(panel, width=width)
+
+    # Sensor History Control
+    def get_sensor_log_content():
+        width = sensor_log_window.render_info.window_width if sensor_log_window.render_info else 50
+        if width < 30: width = 30
+        
+        with state.lock:
+            logs = list(state.sensor_logs)
+        
+        log_text = "\n".join(logs)
+        panel = Panel(log_text, title="[bold yellow]Sensor History[/]", border_style="yellow", padding=(0,1), expand=True)
         return get_rich_console_content(panel, width=width)
 
     # UI Components
@@ -235,6 +277,7 @@ def create_ui(state):
     
     dashboard_window = Window(content=FormattedTextControl(get_dashboard_content))
     log_window = Window(content=FormattedTextControl(get_log_content))
+    sensor_log_window = Window(content=FormattedTextControl(get_sensor_log_content))
     
     input_field = TextArea(
         height=1,
@@ -246,7 +289,11 @@ def create_ui(state):
     body = VSplit([
         dashboard_window,
         Window(width=1, char="|", style="class:line"),
-        log_window
+        HSplit([
+            log_window,
+            Window(height=1, char="-", style="class:line"),
+            sensor_log_window
+        ])
     ])
 
     help_line = Window(
@@ -267,9 +314,12 @@ def create_ui(state):
                 # For now, we'll use a trick: the app will handle it via a shared queue or direct call
                 app_cmd_queue.append(cmd)
         
+        control = FormattedTextControl(
+            HTML(f"<style bg='ansi{color}' fg='white'>  {label}  </style>")
+        )
+        control.mouse_handler = handler
         return Window(
-            content=FormattedTextControl(HTML(f"<style bg='ansi{color}' fg='white'>  {label}  </style>")),
-            mouse_handler=handler,
+            content=control,
             height=1,
             dont_extend_width=True
         )
@@ -342,6 +392,7 @@ def main():
     try:
         sock.connect((args.host, args.port))
         state.connected = True
+        state.open_log() # Clear and start file logging only on success
     except Exception as e:
         print(f"Connection failed: {e}")
         return
@@ -448,6 +499,7 @@ def main():
         app.run()
     finally:
         stop_event.set()
+        state.close()
         sock.close()
         print("Disconnected.")
 

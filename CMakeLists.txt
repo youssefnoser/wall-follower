@@ -82,7 +82,7 @@ endif()
 # ── Executable ────────────────────────────────────────────────────────────────
 set(SOURCES
     # Active main: pick exactly one.
-    src/simple_fsm_main.c
+    src/main.c
     # src/imu_turn_test_main.c
     src/esp_ring.c
     src/l298n.c
