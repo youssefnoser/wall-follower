@@ -102,7 +102,7 @@ class RobotState extends ChangeNotifier {
 
   List<String> get turns {
     final seq = telemetry.tseq;
-    if (seq == null || seq.isEmpty) return const [];
+    if (seq == null || seq.isEmpty || seq == '-') return const [];
     return seq.split('');
   }
 
