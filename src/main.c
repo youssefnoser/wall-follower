@@ -3,7 +3,6 @@
 #include "esp_ring.h"
 #include "flash_logger.h"
 #include "hc_sr04.h"
-#include "ir_sensor.h"
 #include "l298n.h"
 #include "mpu6050.h"
 #include "stm32f1xx_hal.h"
@@ -68,7 +67,6 @@ MPU6050_t imu;
 HC_SR04_t ultrasonic_front;
 HC_SR04_t ultrasonic_left;
 HC_SR04_t ultrasonic_right;
-IR_Sensor_t ir_sensor_front;
 
 void SystemClock_Config(void);
 void GPIO_Init(void);
@@ -645,7 +643,6 @@ int main(void) {
   HC_SR04_Init(&ultrasonic_front);
   HC_SR04_Init(&ultrasonic_left);
   HC_SR04_Init(&ultrasonic_right);
-  IR_Sensor_Init(&ir_sensor_front);
   L298N_Init(&motor_driver);
 
   USART1_UART_Init();
@@ -684,8 +681,6 @@ int main(void) {
      */
     float dist_left, dist_right;
     sensor_acquire(&g_dist_front, &dist_left, &dist_right);
-
-    uint8_t ir_safe = 1; /* IR disabled for testing */
 
     MPU6050_UpdateAngle(&imu);
     poll_wifi(&margin, &running);
@@ -795,8 +790,9 @@ int main(void) {
          */
         int8_t potential_dir = choose_turn(g_filt_left, g_filt_right);
         bool should_turn_early =
+
             (g_dist_front < g_front_decel_cm && potential_dir != 0);
-        bool must_stop_now = (g_dist_front < g_front_stop_cm || !ir_safe);
+        bool must_stop_now = (g_dist_front < g_front_stop_cm);
 
         if (should_turn_early || must_stop_now) {
           L298N_StopAll(&motor_driver);
@@ -978,10 +974,6 @@ void GPIO_Init(void) {
   ultrasonic_right.TRIG_PIN = GPIO_PIN_10;
   ultrasonic_right.ECHO_PORT = GPIOB;
   ultrasonic_right.ECHO_PIN = GPIO_PIN_0;
-
-  ir_sensor_front.GPIO_PORT = GPIOA;
-  ir_sensor_front.GPIO_PIN = GPIO_PIN_4;
-  ir_sensor_front.mode = IR_MODE_DIGITAL;
 
   GPIO_InitTypeDef g = {0};
   g.Pin = GPIO_PIN_13;
