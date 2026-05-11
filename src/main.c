@@ -531,6 +531,17 @@ static void poll_wifi(float *margin, uint8_t *running) {
                           g_filt_left, g_dist_front, g_filt_right);
 
         } else if (strncmp(payload, "GET", 3) == 0) {
+          alen = snprintf(ack, sizeof(ack),
+                          "L=%.1f F=%.1f R=%.1f "
+                          "ANG=%.1f TGT=%.1f "
+                          "RUN=%d TCNT=%d TSEQ=%s\r\n",
+                          g_filt_left, g_dist_front, g_filt_right,
+                          imu.angle_z, g_target_angle,
+                          (int)g_running,
+                          (int)g_turn_count,
+                          g_turn_count ? g_turn_log : "-");
+
+        } else if (strncmp(payload, "STATUS",6) == 0) {
           alen =
               snprintf(ack, sizeof(ack),
                        "WG=%.3f HKP=%.3f HKD=%.3f "

@@ -66,7 +66,7 @@ class RobotState extends ChangeNotifier {
       await _savePrefs();
       _startPolling();
       // Pull full state once so the PID screen can seed from real values.
-      await send('GET');
+      await send('STATUS');
     }
     return ok;
   }
