@@ -8,23 +8,23 @@ project(STM32_Motor_Control C ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-# ── MCU identity ──────────────────────────────────────────────────────────────
+#  MCU identity 
 set(STM32_FAMILY STM32F1xx)
 set(STM32_MODEL  STM32F103C8)
 
-# ── Cortex-M3: NO -mfpu / -mfloat-abi (hardware FPU does not exist) ──────────
+#  Cortex-M3: NO -mfpu / -mfloat-abi (hardware FPU does not exist) 
 set(MCU_FLAGS "-mcpu=cortex-m3 -mthumb")
 
 set(CMAKE_C_FLAGS
     "${MCU_FLAGS} -Wall -Wextra -Wno-unused-parameter -Og -g3 -fdata-sections -ffunction-sections")
 set(CMAKE_ASM_FLAGS "${MCU_FLAGS} -x assembler-with-cpp")
 
-# ── Post-build tools ──────────────────────────────────────────────────────────
+#  Post-build tools 
 find_program(CMAKE_OBJCOPY arm-none-eabi-objcopy REQUIRED)
 find_program(CMAKE_OBJDUMP arm-none-eabi-objdump)
 find_program(CMAKE_SIZE    arm-none-eabi-size)
 
-# ── Include paths ─────────────────────────────────────────────────────────────
+#  Include paths 
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/inc
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/STM32F1xx_HAL_Driver/inc
@@ -32,12 +32,12 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/drivers/CMSIS/inc
 )
 
-# ── HAL define: tells stm32f1xx.h which device variant to use ─────────────────
+#  HAL define: tells stm32f1xx.h which device variant to use 
 # STM32F103x8 = 64 KB Flash  |  STM32F103xB = 128 KB Flash
 # Change to STM32F103xB if you use the 128 KB variant
 add_compile_definitions(STM32F103xB USE_HAL_DRIVER)
 
-# ── HAL sources — add/remove as your project needs ────────────────────────────
+#  HAL sources — add/remove as your project needs 
 set(HAL_SOURCES
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_cortex.c
@@ -59,7 +59,7 @@ set(HAL_SOURCES
     drivers/CMSIS/Device/ST/STM32F1xx/source/Templates/system_stm32f1xx.c
 )
 
-# ── Startup file (GCC variant for STM32F103x8) ────────────────────────────────
+#  Startup file (GCC variant for STM32F103x8) 
 set(STARTUP_FILE
     drivers/CMSIS/Device/ST/STM32F1xx/source/Templates/gcc/startup_stm32f103xb.s)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${STARTUP_FILE}")
@@ -71,7 +71,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${STARTUP_FILE}")
         "     and Source/  → drivers/CMSIS/Device/ST/STM32F1xx/source/")
 endif()
 
-# ── Linker script ─────────────────────────────────────────────────────────────
+#  Linker script 
 set(LINKER_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/STM32F103C8Tx_FLASH.ld")
 if(NOT EXISTS "${LINKER_SCRIPT}")
     message(FATAL_ERROR
@@ -79,7 +79,7 @@ if(NOT EXISTS "${LINKER_SCRIPT}")
         "It should have been generated alongside this CMakeLists.")
 endif()
 
-# ── Executable ────────────────────────────────────────────────────────────────
+#  Executable 
 set(SOURCES
     # Active main: pick exactly one.
     src/main.c
@@ -91,8 +91,6 @@ set(SOURCES
     src/mpu6050.c
     src/ESP8266.c
     src/dwt_stm32_delay.c
-    src/wall_follower_fsm.c
-    src/pid.c
     src/wifi_control.c
     src/syscalls.c
     src/flash_logger.c
@@ -113,7 +111,7 @@ target_link_options(${PROJECT_NAME}.elf PRIVATE
     -T${LINKER_SCRIPT}
 )
 
-# ── Post-build: hex + bin + size ──────────────────────────────────────────────
+#  Post-build: hex + bin + size 
 add_custom_command(TARGET ${PROJECT_NAME}.elf POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O ihex   $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.hex
     COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:${PROJECT_NAME}.elf> ${PROJECT_NAME}.bin
@@ -129,7 +127,7 @@ if(CMAKE_SIZE)
     )
 endif()
 
-# ── Flash target (openocd) ────────────────────────────────────────────────────
+#  Flash target (openocd) 
 find_program(OPENOCD openocd)
 if(OPENOCD)
     add_custom_target(flash
