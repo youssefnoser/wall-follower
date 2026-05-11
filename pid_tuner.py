@@ -93,12 +93,20 @@ class RobotState:
             if self.app: self.app.invalidate()
             return
         
+        if response.startswith("["):
+            self.log(response, "mcu")
+
         parsed = {}
+        # Support both k=v (GET response) and k:v ([FSM] logs)
         for token in response.split():
-            if "=" in token:
-                k, _, v = token.partition("=")
+            if "=" in token or ":" in token:
+                sep = "=" if "=" in token else ":"
+                k, _, v = token.partition(sep)
                 try:
-                    parsed[k] = float(v)
+                    # Strip any non-numeric noise from the value
+                    v_clean = "".join(c for c in v if c.isdigit() or c in ".-+")
+                    if v_clean:
+                        parsed[k] = float(v_clean)
                 except ValueError:
                     pass
         

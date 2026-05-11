@@ -16,14 +16,13 @@
 /* ---- Corridor-centering tuning --------------------------------------- */
 #define CENTER_MARGIN_CM 2.0f /* dead-band around wall_error = 0       */
 #define BASE_SPEED 55         /* nominal forward PWM % (was 42)         */
-#define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing               */
+#define EMA_ALPHA 0.50f       /* ultrasonic EMA smoothing (was 0.60)    */
 #define SENSITIVITY 20.0f     /* tanh compression knee (cm)             */
 #define SPEED_FLOOR 35        /* min PWM % while doing wall correction  */
 
-/* ---- Front-obstacle threshold ---------------------------------------- *
- * When front dist drops below this, stop and evaluate L/R for a turn.   *
- * No ramp — just a clean threshold so the robot actually commits.        */
-#define FRONT_OBSTACLE_CM 28.0f
+/* ---- Front-obstacle thresholds --------------------------------------- */
+#define FRONT_DECEL_CM 35.0f /* Start slowing down & check for turns   */
+#define FRONT_STOP_CM 20.0f  /* Final stop/dead-end threshold          */
 
 /* ---- Turn / navigation ----------------------------------------------- */
 #define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
@@ -39,17 +38,17 @@
 
 /* Approach zone: when remaining drops below this, we slow down hard */
 #define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
-#define TURN_APPROACH_MAX 28    /* PWM ceiling inside slow zone (%)   */
-#define TURN_APPROACH_MIN 22    /* stiction floor inside slow zone    */
+#define TURN_APPROACH_MAX 32    /* PWM ceiling inside slow zone (%)   */
+#define TURN_APPROACH_MIN 26    /* stiction floor inside slow zone    */
 
 #define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
 /* ---- Wall-to-heading gain -------------------------------------------- */
-#define WALL_TO_HEADING_GAIN_DEFAULT 0.4f
+#define WALL_TO_HEADING_GAIN_DEFAULT 0.50f
 
 /* ---- Heading-hold PD ------------------------------------------------- */
-#define HEADING_KP_DEFAULT 2.0f
-#define HEADING_KD_DEFAULT 0.3f
+#define HEADING_KP_DEFAULT 3.0f
+#define HEADING_KD_DEFAULT 0.45f
 
 /* ---- Per-side motor scale factors ------------------------------------ */
 #define LEFT_MOTOR_FACTOR 1.0f
@@ -597,13 +596,24 @@ int main(void) {
         if (wall_error > -margin && wall_error < margin)
           wall_error = 0.0f;
 
-        /* Speed: reduce proportionally to wall error magnitude */
+        /* Speed: reduce proportionally to wall error AND front distance */
         float abs_err = fabsf(wall_error);
-        float t = abs_err / SENSITIVITY;
-        if (t > 1.0f)
-          t = 1.0f;
-        float effective_base =
-            (float)g_base_speed * (1.0f - t) + (float)SPEED_FLOOR * t;
+        float t_wall = abs_err / SENSITIVITY;
+        if (t_wall > 1.0f)
+          t_wall = 1.0f;
+
+        /* Frontal deceleration ramp */
+        float t_front = 0.0f;
+        if (g_dist_front < FRONT_DECEL_CM) {
+          t_front = (FRONT_DECEL_CM - g_dist_front) /
+                    (FRONT_DECEL_CM - FRONT_STOP_CM);
+          if (t_front > 1.0f)
+            t_front = 1.0f;
+        }
+
+        float t_combined = (t_wall > t_front) ? t_wall : t_front;
+        float effective_base = (float)g_base_speed * (1.0f - t_combined) +
+                               (float)SPEED_FLOOR * t_combined;
 
         /* Heading target: tanh-compressed wall error → degrees */
         float compressed = SENSITIVITY * tanhf(wall_error / SENSITIVITY);
@@ -617,15 +627,21 @@ int main(void) {
                g_target_angle, imu.angle_z, (int)effective_base);
 
         /*
-         * Turn evaluation: front blocked or IR tripped.
-         * Decide L/R from the EMA-filtered side readings.
+         * Turn evaluation:
+         * 1. If in DECEL zone and we see a side opening, take it.
+         * 2. If we hit STOP zone, stop and evaluate (turn or dead-end).
          */
-        if (g_dist_front < FRONT_OBSTACLE_CM || !ir_safe) {
+        int8_t potential_dir = choose_turn(g_filt_left, g_filt_right);
+        bool should_turn_early =
+            (g_dist_front < FRONT_DECEL_CM && potential_dir != 0);
+        bool must_stop_now = (g_dist_front < FRONT_STOP_CM || !ir_safe);
+
+        if (should_turn_early || must_stop_now) {
           L298N_StopAll(&motor_driver);
           HAL_Delay(80); /* chassis settle */
 
-          printf("[FSM] STOPPED | F:%.1f L:%.1f R:%.1f\r\n", g_dist_front,
-                 g_filt_left, g_filt_right);
+          printf("[FSM] STOPPED | F:%.1f L:%.1f R:%.1f (Early:%d)\r\n",
+                 g_dist_front, g_filt_left, g_filt_right, should_turn_early);
 
           int8_t dir = choose_turn(g_filt_left, g_filt_right);
           if (dir > 0) {
