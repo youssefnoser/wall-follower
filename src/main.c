@@ -24,7 +24,7 @@
 #define FRONT_STOP_CM 20.0f  /* Final stop/dead-end threshold          */
 
 /* ---- Turn / navigation ----------------------------------------------- */
-#define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
+#define D_FAR_CM 50.0f        /* side dist > D_FAR → corridor is open   */
 #define OPEN_WALL_CM 20.0f    /* side dist above this → wall not present */
 #define DESIRED_WALL_CM 15.0f /* single-wall follow target              */
 /* ---- Turn / navigation (PD) ------------------------------------------ */
@@ -130,6 +130,12 @@ static void turn_log_append(char dir) {
     g_turn_log[g_turn_count++] = dir;
     g_turn_log[g_turn_count] = '\0';
   }
+}
+
+static bool is_open_space(void) {
+  return (g_dist_front > g_d_far_cm &&
+          g_filt_left  > g_d_far_cm &&
+          g_filt_right > g_d_far_cm);
 }
 
 /* FSM */
@@ -794,6 +800,13 @@ int main(void) {
                g_filt_left, g_filt_right, g_dist_front, wall_error,
                g_target_angle, imu.angle_z, (int)effective_base);
 
+        if (is_open_space()) {
+          printf("[FSM] OPEN SPACE → DEAD_END\r\n");
+          L298N_StopAll(&motor_driver);
+          g_state = STATE_DEAD_END;
+          break;
+        }
+
         /*
          * Turn evaluation:
          * 1. If in DECEL zone and we see a side opening, take it.
@@ -839,8 +852,13 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        g_state = STATE_FORWARD;
-        printf("[FSM] → FORWARD after left turn\r\n");
+        if (is_open_space()) {
+          printf("[FSM] OPEN SPACE after left turn → DEAD_END\r\n");
+          g_state = STATE_DEAD_END;
+        } else {
+          g_state = STATE_FORWARD;
+          printf("[FSM] → FORWARD after left turn\r\n");
+        }
         break;
 
       /* -------------------------------------------------------- */
@@ -853,8 +871,13 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        g_state = STATE_FORWARD;
-        printf("[FSM] → FORWARD after right turn\r\n");
+        if (is_open_space()) {
+          printf("[FSM] OPEN SPACE after right turn → DEAD_END\r\n");
+          g_state = STATE_DEAD_END;
+        } else {
+          g_state = STATE_FORWARD;
+          printf("[FSM] → FORWARD after right turn\r\n");
+        }
         break;
 
       /* -------------------------------------------------------- */
@@ -871,6 +894,15 @@ int main(void) {
         g_dist_front = ff;
         g_filt_left = g_ema_alpha * fl + (1.0f - g_ema_alpha) * g_filt_left;
         g_filt_right = g_ema_alpha * fr + (1.0f - g_ema_alpha) * g_filt_right;
+
+        if (is_open_space()) {
+          printf("[FSM] DEAD_END: open space persists → IDLE\r\n");
+          L298N_StopAll(&motor_driver);
+          running = 0;
+          g_running = 0;
+          g_state = STATE_IDLE;
+          break;
+        }
 
         int8_t dir = choose_turn(g_filt_left, g_filt_right);
         if (dir > 0) {
