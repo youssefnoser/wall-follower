@@ -111,16 +111,22 @@ class RobotState:
         if -mb < wall_error < mb:
             wall_error = 0.0
 
-        compressed = SENSITIVITY * math.tanh(wall_error / SENSITIVITY) if wall_error != 0.0 else 0.0
-        pid_est = kp * compressed
+        # In the new AUTO mode, centering effort is driven by heading bias
+        # Bias = -wall_error * WG
+        # Correction = HKP * Bias (approx, ignoring D term for visualization)
+        wg = d.get("WG", 1.5)
+        hkp = d.get("HKP", 2.0)
+        
+        bias = -wall_error * wg
+        corr_est = hkp * bias
 
-        raw_l = spd - pid_est
-        raw_r = spd + pid_est
+        raw_l = spd - corr_est
+        raw_r = spd + corr_est
 
         self.derived = {
             "wall_error": wall_error,
-            "compressed": compressed,
-            "pid_est": pid_est,
+            "bias": bias,
+            "corr_est": corr_est,
             "pwm_l": max(0, min(100, raw_l * lfac)),
             "pwm_r": max(0, min(100, raw_r * rfac))
         }
@@ -184,7 +190,8 @@ def create_ui(state):
         pid_table.add_row(f"Speed", f"{int(d.get('SPD',0))}% (M:{d.get('MB',0):.1f})")
         pid_table.add_row(f"Scale", f"L:{d.get('LFAC',1):.2f} R:{d.get('RFAC',1):.2f}")
         pid_table.add_row(f"Wall Err", f"{drv.get('wall_error',0):+5.1f} cm")
-        pid_table.add_row(f"PID Out", f"{drv.get('pid_est',0):+5.2f}")
+        pid_table.add_row(f"Wall Gain", f"[bold green]{d.get('WG',0):.2f}[/]")
+        pid_table.add_row(f"Bias Est", f"{drv.get('bias',0):+5.1f}°")
         
         # IMU
         imu_table = Table.grid(expand=True)
@@ -245,7 +252,7 @@ def create_ui(state):
     help_line = Window(
         content=FormattedTextControl(HTML(
             "<style bg='ansigray' fg='black'> "
-            "<b>F/B/L/R</b> Manual | <b>STOP/GO</b> | <b>PID=k,i,d</b> Tune | <b>SPEED=n</b> | <b>q</b> Quit "
+            "<b>F/B/L/R</b> Manual | <b>STOP/GO</b> | <b>WG=n</b> WallGain | <b>HKP=n</b> | <b>PID=k,i,d</b> | <b>q</b> Quit "
             "</style>"
         )),
         height=1
@@ -413,7 +420,7 @@ def main():
             reply = send_recv(sock, up)
             if reply:
                 state.log(reply, "mcu")
-                if "KP=" in reply or "SPD=" in reply:
+                if any(x in reply for x in ["KP=", "SPD=", "WG=", "HKP=", "HKD="]):
                     state.update(reply)
             else:
                 state.log("No response from MCU", "error")

@@ -37,6 +37,7 @@
  * Both tunable at runtime via HKP= / HKD= WiFi commands.               */
 #define HEADING_KP_DEFAULT 2.0f
 #define HEADING_KD_DEFAULT 0.3f
+#define WALL_TO_HEADING_GAIN_DEFAULT 1.5f /* was 0.4 — also sign was wrong */
 
 /* ---- Per-side motor scale factors ------------------------------------ */
 #define LEFT_MOTOR_FACTOR 1.0f
@@ -82,6 +83,7 @@ static float g_current_pid_out = 0.0f;
 static float g_heading_kp = HEADING_KP_DEFAULT;
 static float g_heading_kd = HEADING_KD_DEFAULT;
 static float g_target_angle = 0.0f;
+static float g_wall_gain = WALL_TO_HEADING_GAIN_DEFAULT;
 static uint8_t g_front_obstacle = 0;
 
 /* -----------------------------------------------------------------------
@@ -256,6 +258,14 @@ static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
           }
           alen = snprintf(ack, sizeof(ack), "OK HKD=%.3f\r\n", g_heading_kd);
 
+        } else if (strncmp(payload, "WG=", 3) == 0) {
+          /* Wall-to-heading gain */
+          float f = strtof(payload + 3, NULL);
+          if (f >= 0.0f) {
+            g_wall_gain = f;
+          }
+          alen = snprintf(ack, sizeof(ack), "OK WG=%.3f\r\n", g_wall_gain);
+
         } else if (strncmp(payload, "DATA", 4) == 0) {
           alen = snprintf(ack, sizeof(ack), "L=%.1f F=%.1f R=%.1f\r\n",
                           g_filt_left, g_dist_front, g_filt_right);
@@ -265,12 +275,12 @@ static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
               snprintf(ack, sizeof(ack),
                        "KP=%.3f KI=%.3f KD=%.3f MB=%.2f SPD=%d "
                        "LFAC=%.3f RFAC=%.3f "
-                       "HKP=%.3f HKD=%.3f ANG=%.1f TGT=%.1f "
+                       "HKP=%.3f HKD=%.3f WG=%.3f ANG=%.1f TGT=%.1f "
                        "RUN=%d L=%.1f F=%.1f R=%.1f\r\n",
                        pid->Kp, pid->Ki, pid->Kd, *margin, g_base_speed,
                        g_left_factor, g_right_factor, g_heading_kp,
-                       g_heading_kd, imu.angle_z, g_target_angle, (int)*running,
-                       g_filt_left, g_dist_front, g_filt_right);
+                       g_heading_kd, g_wall_gain, imu.angle_z, g_target_angle,
+                       (int)*running, g_filt_left, g_dist_front, g_filt_right);
 
         } else if (strncmp(payload, "STOP", 4) == 0) {
           *running = 0;
@@ -456,15 +466,13 @@ int main(void) {
 
     } else {
       /* ---- AUTO corridor-centering ------------------------------------ */
-      if (was_stopped) {
-        g_target_angle = imu.angle_z; /* latch heading at start of motion */
-        was_stopped = 0;
-      }
+      was_stopped = 0;
 
       float wall_error = g_filt_right - g_filt_left;
       if (wall_error > -margin && wall_error < margin)
         wall_error = 0.0f;
 
+      /* Speed scaling: slow down proportional to lateral error magnitude */
       float abs_err = fabsf(wall_error);
       float t = abs_err / SENSITIVITY;
       if (t > 1.0f)
@@ -472,24 +480,17 @@ int main(void) {
       float effective_base =
           (float)g_base_speed * (1.0f - t) + (float)SPEED_FLOOR * t;
 
-      float compressed = SENSITIVITY * tanhf(wall_error / SENSITIVITY);
-      float pid_out = PID_Compute(&pid_center, 0.0f, compressed, dt);
-
+      /* Heading bias: direct proportional, sign corrected.
+       * wall_error > 0 → too far left  → target < current → steer right
+       * wall_error < 0 → too far right → target > current → steer left */
+      g_target_angle = imu.angle_z - wall_error * g_wall_gain;
       g_current_base = effective_base;
-      g_current_pid_out = pid_out;
+      g_current_pid_out = 0.0f;
 
-      float raw_l = effective_base - pid_out;
-      float raw_r = effective_base + pid_out;
-
-      L298N_Move(&motor_driver, MOTOR_LEFT, MOTOR_FORWARD,
-                 apply_factor(raw_l, g_left_factor));
-      L298N_Move(&motor_driver, MOTOR_RIGHT, MOTOR_FORWARD,
-                 apply_factor(raw_r, g_right_factor));
-
-      printf("[FSM] FWD | L:%.1f R:%.1f Err:%.1f PID:%.2f "
-             "ANG:%.1f TGT:%.1f BASE:%d\r\n",
-             g_filt_left, g_filt_right, wall_error, pid_out, imu.angle_z,
-             g_target_angle, (int)effective_base);
+      printf("[FSM] FWD | L:%.1f R:%.1f Err:%.1f "
+             "TGT:%.1f ANG:%.1f BASE:%d\r\n",
+             g_filt_left, g_filt_right, wall_error, g_target_angle, imu.angle_z,
+             (int)effective_base);
     }
   }
   return 0;
