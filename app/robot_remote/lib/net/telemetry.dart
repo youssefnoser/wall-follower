@@ -12,6 +12,9 @@ class Telemetry {
   final double? angle, target;
   final int? running;
   final double? left, front, right;
+  final int? state;
+  final int? tcnt;
+  final String? tseq;
 
   const Telemetry({
     this.kp,
@@ -30,6 +33,9 @@ class Telemetry {
     this.left,
     this.front,
     this.right,
+    this.state,
+    this.tcnt,
+    this.tseq,
   });
 
   /// Merge a fresh ack on top of the previous snapshot — null fields keep
@@ -51,6 +57,9 @@ class Telemetry {
         left: next.left ?? left,
         front: next.front ?? front,
         right: next.right ?? right,
+        state: next.state ?? state,
+        tcnt: next.tcnt ?? tcnt,
+        tseq: next.tseq ?? tseq,
       );
 
   static double? _f(RegExpMatch? m) =>
@@ -81,6 +90,11 @@ class Telemetry {
       left: _f(f('L')),
       front: _f(f('F')),
       right: _f(f('R')),
+      state: _i(f('STATE')),
+      tcnt: _i(f('TCNT')),
+      tseq: RegExp(r'\bTSEQ=([A-Z]+)', caseSensitive: false)
+          .firstMatch(reply)
+          ?.group(1),
     );
   }
 }

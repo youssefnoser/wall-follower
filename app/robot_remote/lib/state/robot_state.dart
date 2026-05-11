@@ -100,10 +100,17 @@ class RobotState extends ChangeNotifier {
     notifyListeners();
   }
 
+  List<String> get turns {
+    final seq = telemetry.tseq;
+    if (seq == null || seq.isEmpty) return const [];
+    return seq.split('');
+  }
+
+  Future<void> clearTurns() => send('CLRTURNS');
+
   void _onLine(String line) {
     _append(LogEntry(false, line));
-    final parsed = Telemetry.parse(line);
-    telemetry = telemetry.merge(parsed);
+    telemetry = telemetry.merge(Telemetry.parse(line));
     notifyListeners();
   }
 

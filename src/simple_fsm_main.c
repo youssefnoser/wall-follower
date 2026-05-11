@@ -15,9 +15,9 @@
 #include <string.h>
 
 /* ---- Corridor-centering tuning --------------------------------------- */
-#define CENTER_KP 0.5f
-#define CENTER_KI 0.03f
-#define CENTER_KD 0.2f
+#define CENTER_Kp 0.5f
+#define CENTER_Ki 0.03f
+#define CENTER_Kd 0.2f
 #define CENTER_MARGIN_CM 2.0f
 #define BASE_SPEED 42
 #define EMA_ALPHA 0.45f
@@ -35,8 +35,8 @@
  *             within one loop cycle; back off if straight-line oscillates.
  * HEADING_KD: raise if heading overshoots when correcting.
  * Both tunable at runtime via HKP= / HKD= WiFi commands.               */
-#define HEADING_KP_DEFAULT 2.0f
-#define HEADING_KD_DEFAULT 0.3f
+#define HEADING_Kp_DEFAULT 2.0f
+#define HEADING_Kd_DEFAULT 0.3f
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.5f /* was 0.4 — also sign was wrong */
 
 /* ---- Per-side motor scale factors ------------------------------------ */
@@ -80,8 +80,8 @@ static float g_current_base = BASE_SPEED;
 static float g_current_pid_out = 0.0f;
 
 /* Heading-hold state – runtime-tunable via HKP= / HKD= */
-static float g_heading_kp = HEADING_KP_DEFAULT;
-static float g_heading_kd = HEADING_KD_DEFAULT;
+static float g_heading_Kp = HEADING_Kp_DEFAULT;
+static float g_heading_Kd = HEADING_Kd_DEFAULT;
 static float g_target_angle = 0.0f;
 static float g_wall_gain = WALL_TO_HEADING_GAIN_DEFAULT;
 static uint8_t g_front_obstacle = 0;
@@ -122,7 +122,7 @@ static void gyro_tick(void) {
 
   float remaining = g_target_angle - imu.angle_z;
   float rate_z = imu.gyro.z - imu.gyro_z_offset;
-  float corr = g_heading_kp * remaining - g_heading_kd * rate_z;
+  float corr = g_heading_Kp * remaining - g_heading_Kd * rate_z;
 
   float raw_l = g_current_base - g_current_pid_out - corr;
   float raw_r = g_current_base + g_current_pid_out + corr;
@@ -246,17 +246,17 @@ static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
           /* Heading-hold proportional gain */
           float f = strtof(payload + 4, NULL);
           if (f >= 0.0f) {
-            g_heading_kp = f;
+            g_heading_Kp = f;
           }
-          alen = snprintf(ack, sizeof(ack), "OK HKP=%.3f\r\n", g_heading_kp);
+          alen = snprintf(ack, sizeof(ack), "OK HKP=%.3f\r\n", g_heading_Kp);
 
         } else if (strncmp(payload, "HKD=", 4) == 0) {
           /* Heading-hold derivative gain */
           float f = strtof(payload + 4, NULL);
           if (f >= 0.0f) {
-            g_heading_kd = f;
+            g_heading_Kd = f;
           }
-          alen = snprintf(ack, sizeof(ack), "OK HKD=%.3f\r\n", g_heading_kd);
+          alen = snprintf(ack, sizeof(ack), "OK HKD=%.3f\r\n", g_heading_Kd);
 
         } else if (strncmp(payload, "WG=", 3) == 0) {
           /* Wall-to-heading gain */
@@ -278,8 +278,8 @@ static void pid_poll_wifi(PID_t *pid, float *margin, uint8_t *running) {
                        "HKP=%.3f HKD=%.3f WG=%.3f ANG=%.1f TGT=%.1f "
                        "RUN=%d L=%.1f F=%.1f R=%.1f\r\n",
                        pid->Kp, pid->Ki, pid->Kd, *margin, g_base_speed,
-                       g_left_factor, g_right_factor, g_heading_kp,
-                       g_heading_kd, g_wall_gain, imu.angle_z, g_target_angle,
+                       g_left_factor, g_right_factor, g_heading_Kp,
+                       g_heading_Kd, g_wall_gain, imu.angle_z, g_target_angle,
                        (int)*running, g_filt_left, g_dist_front, g_filt_right);
 
         } else if (strncmp(payload, "STOP", 4) == 0) {
@@ -389,7 +389,7 @@ int main(void) {
   printf("[IMU] offset=%.4f\r\n", imu.gyro_z_offset);
 
   PID_t pid_center;
-  PID_Init(&pid_center, CENTER_KP, CENTER_KI, CENTER_KD, -BASE_SPEED,
+  PID_Init(&pid_center, CENTER_Kp, CENTER_Ki, CENTER_Kd, -BASE_SPEED,
            BASE_SPEED);
   float margin = CENTER_MARGIN_CM;
   uint8_t running = 1;

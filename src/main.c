@@ -29,8 +29,8 @@
 #define OPEN_WALL_CM 20.0f    /* side dist above this → wall not present */
 #define DESIRED_WALL_CM 15.0f /* single-wall follow target              */
 /* ---- Turn / navigation (PD) ------------------------------------------ */
-#define TURN_KP 7.0f
-#define TURN_KD 0.7f
+#define TURN_Kp 7.0f
+#define TURN_Kd 0.7f
 #define TURN_MAX_SPEED 70
 #define TURN_MIN_SPEED 35
 #define TURN_STOP_DEG 2.5f
@@ -47,16 +47,19 @@
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.5f
 
 /* ---- Heading-hold PD ------------------------------------------------- */
-#define HEADING_KP_DEFAULT 2.0f
-#define HEADING_KD_DEFAULT 0.3f
+#define HEADING_Kp_DEFAULT 2.0f
+#define HEADING_Kd_DEFAULT 0.3f
+
+/* ---- Turn history ---------------------------------------------------- */
+#define MAX_TURN_LOG 64
 
 /* ---- Per-side motor scale factors ------------------------------------ */
 #define LEFT_MOTOR_FACTOR 1.0f
 #define RIGHT_MOTOR_FACTOR 1.0f
 
 /* ---- WiFi ------------------------------------------------------------ */
-#define WIFI_SSID "Youssef's A51"
-#define WIFI_PASSWORD "lol123a@@@"
+#define WIFI_SSID "ZirnosSpace"
+#define WIFI_PASSWORD "12345678"
 
 /* ---- Hardware handles ------------------------------------------------ */
 UART_HandleTypeDef huart1;
@@ -97,10 +100,19 @@ static float g_right_factor = RIGHT_MOTOR_FACTOR;
 /* Shared state written by main loop, consumed by gyro_tick() */
 static uint8_t g_running = 1;
 static float g_current_base = BASE_SPEED;
-static float g_heading_kp = HEADING_KP_DEFAULT;
-static float g_heading_kd = HEADING_KD_DEFAULT;
+static float g_heading_Kp = HEADING_Kp_DEFAULT;
+static float g_heading_Kd = HEADING_Kd_DEFAULT;
 static float g_wall_gain = WALL_TO_HEADING_GAIN_DEFAULT;
 static float g_target_angle = 0.0f;
+static char g_turn_log[MAX_TURN_LOG + 1] = {0};
+static uint8_t g_turn_count = 0;
+
+static void turn_log_append(char dir) {
+  if (g_turn_count < MAX_TURN_LOG) {
+    g_turn_log[g_turn_count++] = dir;
+    g_turn_log[g_turn_count] = '\0';
+  }
+}
 
 /* FSM */
 static RobotState g_state = STATE_FORWARD;
@@ -161,7 +173,7 @@ static void gyro_tick(void) {
 
   float remaining = g_target_angle - imu.angle_z;
   float rate_z = imu.gyro.z - imu.gyro_z_offset;
-  float corr = g_heading_kp * remaining - g_heading_kd * rate_z;
+  float corr = g_heading_Kp * remaining - g_heading_Kd * rate_z;
 
   float raw_l = g_current_base - corr;
   float raw_r = g_current_base + corr;
@@ -229,7 +241,7 @@ static void do_turn(float delta_deg) {
     float rate_z = imu.gyro.z - imu.gyro_z_offset; /* signed deg/s  */
 
     /* PD output: Positive → CCW (left backward, right forward) */
-    float output = TURN_KP * remaining - TURN_KD * rate_z;
+    float output = TURN_Kp * remaining - TURN_Kd * rate_z;
 
     /* Done when error is small AND the car has stopped rotating */
     if (fabsf(remaining) <= TURN_STOP_DEG && fabsf(rate_z) < 15.0f)
@@ -340,7 +352,7 @@ static void poll_wifi(float *margin, uint8_t *running) {
           payload[--cp] = '\0';
         wifi_link = (int8_t)id;
 
-        char ack[192];
+        char ack[256];
         int alen = 0;
 
         if (strncmp(payload, "WG=", 3) == 0) {
@@ -352,14 +364,14 @@ static void poll_wifi(float *margin, uint8_t *running) {
         } else if (strncmp(payload, "HKP=", 4) == 0) {
           float f = strtof(payload + 4, NULL);
           if (f >= 0.0f)
-            g_heading_kp = f;
-          alen = snprintf(ack, sizeof(ack), "OK HKP=%.3f\r\n", g_heading_kp);
+            g_heading_Kp = f;
+          alen = snprintf(ack, sizeof(ack), "OK HKP=%.3f\r\n", g_heading_Kp);
 
         } else if (strncmp(payload, "HKD=", 4) == 0) {
           float f = strtof(payload + 4, NULL);
           if (f >= 0.0f)
-            g_heading_kd = f;
-          alen = snprintf(ack, sizeof(ack), "OK HKD=%.3f\r\n", g_heading_kd);
+            g_heading_Kd = f;
+          alen = snprintf(ack, sizeof(ack), "OK HKD=%.3f\r\n", g_heading_Kd);
 
         } else if (strncmp(payload, "LFAC=", 5) == 0) {
           float f = strtof(payload + 5, NULL);
@@ -400,11 +412,18 @@ static void poll_wifi(float *margin, uint8_t *running) {
                        "LFAC=%.3f RFAC=%.3f "
                        "ANG=%.1f TGT=%.1f "
                        "RUN=%d STATE=%d "
+                       "TCNT=%d TSEQ=%s "
                        "L=%.1f F=%.1f R=%.1f\r\n",
-                       g_wall_gain, g_heading_kp, g_heading_kd, *margin,
+                       g_wall_gain, g_heading_Kp, g_heading_Kd, *margin,
                        g_base_speed, g_left_factor, g_right_factor, imu.angle_z,
-                       g_target_angle, (int)*running, (int)g_state, g_filt_left,
-                       g_dist_front, g_filt_right);
+                       g_target_angle, (int)*running, (int)g_state,
+                       (int)g_turn_count, g_turn_count ? g_turn_log : "-",
+                       g_filt_left, g_dist_front, g_filt_right);
+
+        } else if (strncmp(payload, "CLRTURNS", 8) == 0) {
+          memset(g_turn_log, 0, sizeof(g_turn_log));
+          g_turn_count = 0;
+          alen = snprintf(ack, sizeof(ack), "OK CLRTURNS\r\n");
 
         } else if (strncmp(payload, "STOP", 4) == 0) {
           *running = 0;
@@ -645,9 +664,11 @@ int main(void) {
           int8_t dir = choose_turn(g_filt_left, g_filt_right);
           if (dir > 0) {
             printf("[FSM] → TURN_LEFT  (L=%.1f)\r\n", g_filt_left);
+            turn_log_append('L');
             g_state = STATE_TURN_LEFT;
           } else if (dir < 0) {
             printf("[FSM] → TURN_RIGHT (R=%.1f)\r\n", g_filt_right);
+            turn_log_append('R');
             g_state = STATE_TURN_RIGHT;
           } else {
             printf("[FSM] → DEAD_END\r\n");
@@ -703,9 +724,11 @@ int main(void) {
         int8_t dir = choose_turn(g_filt_left, g_filt_right);
         if (dir > 0) {
           printf("[FSM] → TURN_LEFT after backup\r\n");
+          turn_log_append('L');
           g_state = STATE_TURN_LEFT;
         } else if (dir < 0) {
           printf("[FSM] → TURN_RIGHT after backup\r\n");
+          turn_log_append('R');
           g_state = STATE_TURN_RIGHT;
         } else {
           printf("[FSM] → IDLE (true dead end)\r\n");

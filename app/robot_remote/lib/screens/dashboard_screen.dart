@@ -70,6 +70,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _modeCard(state),
             const SizedBox(height: 12),
             _runCard(state, t.running),
+            const SizedBox(height: 12),
+            _turnsCard(state),
           ],
         ),
       ),
@@ -256,6 +258,57 @@ class _DashboardScreenState extends State<DashboardScreen> {
               onPressed: state.connected ? () => state.send('GO') : null,
               child: const Text('GO'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _turnsCard(RobotState state) {
+    final turns = state.turns;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.turn_right_outlined),
+                const SizedBox(width: 8),
+                Text('Turns: ${turns.length}',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  tooltip: 'Clear',
+                  onPressed: turns.isEmpty ? null : state.clearTurns,
+                ),
+              ],
+            ),
+            if (turns.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: turns.map((t) {
+                  final isLeft = t == 'L';
+                  return Chip(
+                    label: Text(t,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 13)),
+                    backgroundColor: isLeft
+                        ? Colors.blue.withValues(alpha: 0.15)
+                        : Colors.green.withValues(alpha: 0.15),
+                    side: BorderSide(
+                        color: isLeft ? Colors.blue : Colors.green, width: 1),
+                    padding: EdgeInsets.zero,
+                    labelPadding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                  );
+                }).toList(),
+              ),
+            ],
           ],
         ),
       ),
