@@ -57,8 +57,8 @@
 #define RIGHT_MOTOR_FACTOR 1.0f
 
 /* ---- WiFi ------------------------------------------------------------ */
-#define WIFI_SSID "ZirnosSpace"
-#define WIFI_PASSWORD "12345678"
+#define WIFI_SSID "Youssef's A51"
+#define WIFI_PASSWORD "lol123a@@@"
 
 /* ---- Hardware handles ------------------------------------------------ */
 UART_HandleTypeDef huart1;
@@ -417,6 +417,18 @@ static void poll_wifi(float *margin, uint8_t *running) {
                        g_target_angle, (int)*running, (int)g_state,
                        (int)g_turn_count, g_turn_count ? g_turn_log : "-",
                        g_filt_left, g_dist_front, g_filt_right);
+
+        } else if (strncmp(payload, "REPORT", 6) == 0) {
+          char seq[MAX_TURN_LOG * 3] = {0};
+          int s_pos = 0;
+          for (int i = 0; i < g_turn_count; i++) {
+            if (i > 0) {
+              s_pos += sprintf(seq + s_pos, ", ");
+            }
+            s_pos += sprintf(seq + s_pos, "%c", g_turn_log[i]);
+          }
+          alen = snprintf(ack, sizeof(ack), "Turns: %d\r\nSequence: %s\r\n",
+                          (int)g_turn_count, g_turn_count ? seq : "-");
 
         } else if (strncmp(payload, "CLRTURNS", 8) == 0) {
           memset(g_turn_log, 0, sizeof(g_turn_log));

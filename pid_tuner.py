@@ -307,7 +307,7 @@ def create_ui(state):
     help_line = Window(
         content=FormattedTextControl(HTML(
             "<style bg='ansigray' fg='black'> "
-            "<b>F/B/L/R</b> Manual | <b>STOP/GO</b> | <b>WG=n</b> WallGain | <b>HKP=n</b> | <b>PID=k,i,d</b> | <b>q</b> Quit "
+            "<b>F/B/L/R</b> Manual | <b>STOP/GO</b> | <b>REPORT (t)</b> | <b>WG=n</b> | <b>HKP=n</b> | <b>q</b> Quit "
             "</style>"
         )),
         height=1
@@ -345,6 +345,8 @@ def create_ui(state):
         Window(width=1),
         make_btn(" RIGHT ", "RIGHT"),
         Window(width=2),
+        make_btn(" REPORT ", "REPORT", "yellow"),
+        Window(width=1),
         make_btn(" GET ", "GET", "blue"),
     ], align=WindowAlign.CENTER)
 
@@ -361,17 +363,25 @@ def create_ui(state):
 # ---------------------------------------------------------------------------
 # Communication logic
 # ---------------------------------------------------------------------------
-def send_recv(sock, cmd):
+def send_recv(sock, cmd, timeout=0.1):
     try:
         sock.sendall((cmd.strip() + "\n").encode())
+        # Multi-line/Multi-packet support: read until short timeout
         data = b""
+        sock.settimeout(timeout)
         while True:
-            chunk = sock.recv(1024)
-            data += chunk
-            if b"\n" in chunk: break
+            try:
+                chunk = sock.recv(4096)
+                if not chunk: break
+                data += chunk
+                if len(chunk) < 4096: break  # Likely end of burst
+            except socket.timeout:
+                break
         return data.decode(errors="replace").strip()
     except:
         return None
+    finally:
+        sock.settimeout(RECV_TIMEOUT)
 
 def monitor_loop(sock, state, stop_event):
     while not stop_event.is_set():
@@ -443,6 +453,9 @@ def main():
 
     @kb.add("g")
     def _(event): quick_cmd("GO")
+
+    @kb.add("t")
+    def _(event): quick_cmd("REPORT")
 
     @kb.add("c-c")
     @kb.add("q")
