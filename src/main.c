@@ -15,9 +15,9 @@
 
 /* ---- Corridor-centering tuning --------------------------------------- */
 #define CENTER_MARGIN_CM 2.0f /* dead-band around wall_error = 0       */
-#define BASE_SPEED 55         /* nominal forward PWM % (was 42)         */
-#define EMA_ALPHA 0.50f       /* ultrasonic EMA smoothing (was 0.60)    */
-#define SENSITIVITY 20.0f     /* tanh compression knee (cm)             */
+#define BASE_SPEED 60         /* nominal forward PWM %                  */
+#define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing               */
+#define SENSITIVITY 20.0f     /* wall-error sensitivity (cm)            */
 #define SPEED_FLOOR 35        /* min PWM % while doing wall correction  */
 
 /* ---- Front-obstacle thresholds --------------------------------------- */
@@ -39,16 +39,16 @@
 /* Approach zone: when remaining drops below this, we slow down hard */
 #define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
 #define TURN_APPROACH_MAX 32    /* PWM ceiling inside slow zone (%)   */
-#define TURN_APPROACH_MIN 26    /* stiction floor inside slow zone    */
+#define TURN_APPROACH_MIN 28    /* stiction floor inside slow zone    */
 
 #define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
 /* ---- Wall-to-heading gain -------------------------------------------- */
-#define WALL_TO_HEADING_GAIN_DEFAULT 0.50f
+#define WALL_TO_HEADING_GAIN_DEFAULT 1.5f
 
 /* ---- Heading-hold PD ------------------------------------------------- */
-#define HEADING_KP_DEFAULT 3.0f
-#define HEADING_KD_DEFAULT 0.45f
+#define HEADING_KP_DEFAULT 2.0f
+#define HEADING_KD_DEFAULT 0.3f
 
 /* ---- Per-side motor scale factors ------------------------------------ */
 #define LEFT_MOTOR_FACTOR 1.0f
@@ -586,9 +586,9 @@ int main(void) {
         if (!left_open && !right_open) {
           wall_error = g_filt_right - g_filt_left;
         } else if (!right_open) {
-          wall_error = DESIRED_WALL_CM - g_filt_right;
+          wall_error = g_filt_right - DESIRED_WALL_CM;
         } else if (!left_open) {
-          wall_error = g_filt_left - DESIRED_WALL_CM;
+          wall_error = DESIRED_WALL_CM - g_filt_left;
         } else {
           wall_error = 0.0f;
         }
@@ -615,9 +615,8 @@ int main(void) {
         float effective_base = (float)g_base_speed * (1.0f - t_combined) +
                                (float)SPEED_FLOOR * t_combined;
 
-        /* Heading target: tanh-compressed wall error → degrees */
-        float compressed = SENSITIVITY * tanhf(wall_error / SENSITIVITY);
-        g_target_angle = imu.angle_z + compressed * g_wall_gain;
+        /* Heading target: direct proportional, sign corrected. */
+        g_target_angle = imu.angle_z - wall_error * g_wall_gain;
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
