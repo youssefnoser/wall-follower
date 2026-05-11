@@ -1,6 +1,11 @@
 #include "ESP8266.h"
-#include "ESP8266Config.h"
+#include "dwt_stm32_delay.h"
 #include "esp_ring.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // UART_HandleTypeDef	_WIFI_USART;
 Wifi_t Wifi;
