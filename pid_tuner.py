@@ -1,25 +1,6 @@
 """
-pid_tuner.py – Interactive WiFi tuner for the STM32 corridor-centering robot.
-
-IMPORTANT: Right motor is inverted in firmware (L298N_SetDirection), so PID
-steering directions are now corrected in the corridor control block.
-
-Protocol (TCP port 1234) — all commands the MCU understands:
-  PID=Kp,Ki,Kd   update gains + reset integral on MCU
-  MB=<cm>         dead-band margin (suppress corrections smaller than ±N cm)
-  SPEED=<n>       base PWM duty 0–100
-  LFAC=<f>        left motor scale factor, e.g. 1.08  (range 0.5–2.0)
-  RFAC=<f>        right motor scale factor, e.g. 0.95
-  GET             query all current params + live sensor values
-  DATA            just sensor snapshot: L=xx F=xx R=xx
-  STOP / GO       halt / resume autonomous loop
-  AUTO            switch to autonomous PID corridor-centering
-  FWD / BWD       manual drive forward / backward
-  LEFT / RIGHT    manual pivot left / right
-
-Usage:
-  python3 pid_tuner.py <robot-ip>           # default port 1234
-  python3 pid_tuner.py <robot-ip> <port>
+pid_tuner.py – Premium Stable Dashboard.
+Uses prompt_toolkit Application for a flicker-free, side-by-side TUI.
 """
 
 import argparse
@@ -28,490 +9,440 @@ import socket
 import sys
 import time
 import threading
+from collections import deque
+from datetime import datetime
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.columns import Columns
+from rich.align import Align
+from rich.live import Live
+
+from prompt_toolkit.application import Application
+from prompt_toolkit.layout.containers import HSplit, VSplit, Window, WindowAlign, FloatContainer
+from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.widgets import Frame, TextArea
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.formatted_text import HTML
+
+# ---------------------------------------------------------------------------
+# Constants & Settings
+# ---------------------------------------------------------------------------
 DEFAULT_PORT = 1234
 RECV_TIMEOUT = 2.0
-
-# Must match #define SENSITIVITY in firmware
 SENSITIVITY = 20.0
-
-# Factor sanity-check range (warn, not reject)
-FACTOR_MIN = 0.5
-FACTOR_MAX = 2.0
-
+LOG_MAX = 50
 
 # ---------------------------------------------------------------------------
-# Preset tuning sequences
+# State Management
 # ---------------------------------------------------------------------------
-PRESETS = {
-    "1": ("Conservative start  (Kp only, no I)", "PID=0.3,0.0,0.1"),
-    "2": ("Add integral bias correction", "PID=0.5,0.03,0.2"),
-    "3": ("Recommended start (after motor fix)", "PID=0.5,0.03,0.2"),
-    "4": ("More responsive – raise Kp", "PID=0.8,0.05,0.3"),
-    "5": ("Aggressive – high Kp, higher D", "PID=1.2,0.1,0.5"),
-    "6": ("Stable tuning – low gains, gentle", "PID=0.3,0.02,0.1"),
-}
+class RobotState:
+    def __init__(self, host):
+        self.data = {}
+        self.derived = {}
+        self.logs = deque(maxlen=LOG_MAX)
+        self.connected = False
+        self.last_update = 0
+        self.ip = host
+        self.lock = threading.Lock()
+        self.app = None # To be set by main
 
+    def log(self, msg, type="info"):
+        ts = datetime.now().strftime("%H:%M:%S")
+        color = "white"
+        if type == "mcu": color = "cyan"
+        elif type == "error": color = "red"
+        elif type == "cmd": color = "yellow"
+        elif type == "status": color = "green"
+        
+        # Use rich tags for log storage
+        with self.lock:
+            self.logs.append(f"[{ts}] [{color}]{msg}[/{color}]")
+        
+        if self.app:
+            self.app.invalidate()
+
+    def update(self, response):
+        if not response:
+            with self.lock:
+                self.connected = False
+            if self.app: self.app.invalidate()
+            return
+        
+        parsed = {}
+        for token in response.split():
+            if "=" in token:
+                k, _, v = token.partition("=")
+                try:
+                    parsed[k] = float(v)
+                except ValueError:
+                    pass
+        
+        # Heading clamping [-180, 180]
+        for k in ["ANG", "TGT"]:
+            if k in parsed:
+                parsed[k] = (parsed[k] + 180) % 360 - 180
+        
+        with self.lock:
+            self.data.update(parsed)
+            self.derive()
+            self.last_update = time.time()
+            self.connected = True
+        
+        if self.app:
+            self.app.invalidate()
+
+    def derive(self):
+        d = self.data
+        L = d.get("L", 0.0)
+        R = d.get("R", 0.0)
+        mb = d.get("MB", 2.0)
+        kp = d.get("KP", 0.0)
+        spd = d.get("SPD", 42.0)
+        lfac = d.get("LFAC", 1.0)
+        rfac = d.get("RFAC", 1.0)
+
+        wall_error = R - L 
+        if -mb < wall_error < mb:
+            wall_error = 0.0
+
+        compressed = SENSITIVITY * math.tanh(wall_error / SENSITIVITY) if wall_error != 0.0 else 0.0
+        pid_est = kp * compressed
+
+        raw_l = spd - pid_est
+        raw_r = spd + pid_est
+
+        self.derived = {
+            "wall_error": wall_error,
+            "compressed": compressed,
+            "pid_est": pid_est,
+            "pwm_l": max(0, min(100, raw_l * lfac)),
+            "pwm_r": max(0, min(100, raw_r * rfac))
+        }
 
 # ---------------------------------------------------------------------------
-# Socket helpers
+# UI Helpers (Rich -> PromptToolkit)
 # ---------------------------------------------------------------------------
-def send_recv(sock: socket.socket, cmd: str) -> str:
-    sock.sendall((cmd.strip() + "\n").encode())
-    try:
-        return sock.recv(256).decode(errors="replace").strip()
-    except socket.timeout:
-        return ""
+from prompt_toolkit.formatted_text import ANSI
 
+def get_rich_console_content(renderable, width=60):
+    console = Console(width=width, force_terminal=True, color_system="standard")
+    with console.capture() as capture:
+        console.print(renderable)
+    return ANSI(capture.get())
 
-def send_only(sock: socket.socket, cmd: str) -> None:
+# ---------------------------------------------------------------------------
+# Layout Construction
+# ---------------------------------------------------------------------------
+def create_ui(state):
+    # Header Control
+    def get_header_text():
+        with state.lock:
+            status = "<style fg='ansigreen' bgcolor='ansiblue'>ONLINE</style>" if state.connected else "<style fg='ansired' bgcolor='ansiblue'>OFFLINE</style>"
+            ts = time.strftime('%H:%M:%S', time.localtime(state.last_update)) if state.last_update else "--:--:--"
+        
+        return HTML(
+            f"<style bg='ansiblue' fg='white'> "
+            f"<b>STM32 ROBOT TUNER</b> | IP: {state.ip} | Status: {status} | Last Update: {ts} "
+            f"</style>"
+        )
+
+    # Dashboard Control (Left)
+    def get_dashboard_content():
+        # Get actual window width to avoid clipping
+        width = dashboard_window.render_info.window_width if dashboard_window.render_info else 60
+        if width < 40: width = 40 # Minimum sanity
+        
+        with state.lock:
+            d = state.data.copy()
+            drv = state.derived.copy()
+            connected = state.connected
+        
+        # Sensors
+        sensor_table = Table.grid(expand=True)
+        sensor_table.add_column(width=8)
+        sensor_table.add_column(justify="right")
+        
+        L, R, F = d.get("L", 0.0), d.get("R", 0.0), d.get("F", 0.0)
+        def bar(val, max_val=80):
+            bar_w = max(5, width // 6)
+            filled = int(min(1.0, val / max_val) * bar_w)
+            return "[" + "█" * filled + "░" * (bar_w - filled) + "]"
+
+        sensor_table.add_row("[blue]Left[/]", f"{L:4.1f} {bar(L)}")
+        sensor_table.add_row("[cyan]Right[/]", f"{R:4.1f} {bar(R)}")
+        sensor_table.add_row("[yellow]Front[/]", f"{F:4.1f} {bar(F, 120)}")
+        
+        # PID
+        pid_table = Table.grid(expand=True)
+        pid_table.add_row(f"KP/I/D", f"[bold cyan]{d.get('KP',0):.2f}/{d.get('KI',0):.3f}/{d.get('KD',0):.2f}[/]")
+        pid_table.add_row(f"Speed", f"{int(d.get('SPD',0))}% (M:{d.get('MB',0):.1f})")
+        pid_table.add_row(f"Scale", f"L:{d.get('LFAC',1):.2f} R:{d.get('RFAC',1):.2f}")
+        pid_table.add_row(f"Wall Err", f"{drv.get('wall_error',0):+5.1f} cm")
+        pid_table.add_row(f"PID Out", f"{drv.get('pid_est',0):+5.2f}")
+        
+        # IMU
+        imu_table = Table.grid(expand=True)
+        imu_table.add_row("Angle", f"[bold yellow]{d.get('ANG',0):+6.1f}°[/]")
+        imu_table.add_row("Target", f"{d.get('TGT',0):+6.1f}°")
+        imu_table.add_row("HK P/D", f"{d.get('HKP',0):.1f}/{d.get('HKD',0):.2f}")
+
+        # Final Dashboard Panel
+        layout = Columns([
+            Panel(sensor_table, title="[blue]Sensors[/]", border_style="blue", padding=(0,1)),
+            Panel(pid_table, title="[green]Control[/]", border_style="green", padding=(0,1)),
+            Panel(imu_table, title="[magenta]IMU[/]", border_style="magenta", padding=(0,1))
+        ], expand=True)
+
+        run_status = "[bold green]RUNNING[/]" if d.get("RUN", 0) else "[bold red]STOPPED[/]"
+        
+        full_panel = Panel(
+            layout, 
+            title=f" [bold white]Robot Status[/] - {run_status} ", 
+            border_style="bright_white",
+            padding=(0,1),
+            expand=True
+        )
+        
+        return get_rich_console_content(full_panel, width=width)
+
+    # Log Control (Right)
+    def get_log_content():
+        width = log_window.render_info.window_width if log_window.render_info else 50
+        if width < 30: width = 30
+        
+        with state.lock:
+            logs = list(state.logs)
+        
+        log_text = "\n".join(logs)
+        panel = Panel(log_text, title="[bold cyan]Command Log[/]", border_style="cyan", padding=(0,1), expand=True)
+        return get_rich_console_content(panel, width=width)
+
+    # UI Components
+    header_window = Window(content=FormattedTextControl(get_header_text), height=1, align=WindowAlign.CENTER)
+    
+    dashboard_window = Window(content=FormattedTextControl(get_dashboard_content))
+    log_window = Window(content=FormattedTextControl(get_log_content))
+    
+    input_field = TextArea(
+        height=1,
+        prompt="pid_tuner> ",
+        multiline=False,
+        wrap_lines=False,
+    )
+
+    body = VSplit([
+        dashboard_window,
+        Window(width=1, char="|", style="class:line"),
+        log_window
+    ])
+
+    help_line = Window(
+        content=FormattedTextControl(HTML(
+            "<style bg='ansigray' fg='black'> "
+            "<b>F/B/L/R</b> Manual | <b>STOP/GO</b> | <b>PID=k,i,d</b> Tune | <b>SPEED=n</b> | <b>q</b> Quit "
+            "</style>"
+        )),
+        height=1
+    )
+
+    # Buttons Row
+    def make_btn(label, cmd, color="gray"):
+        def handler(mouse_event):
+            if mouse_event.event_type == "MOUSE_UP":
+                state.log(f"Clicked {label}", "cmd")
+                # Trigger command (we need to pass this up or use a global-ish state)
+                # For now, we'll use a trick: the app will handle it via a shared queue or direct call
+                app_cmd_queue.append(cmd)
+        
+        return Window(
+            content=FormattedTextControl(HTML(f"<style bg='ansi{color}' fg='white'>  {label}  </style>")),
+            mouse_handler=handler,
+            height=1,
+            dont_extend_width=True
+        )
+
+    buttons_row = VSplit([
+        make_btn(" STOP ", "STOP", "red"),
+        Window(width=1),
+        make_btn(" GO (Auto) ", "GO", "green"),
+        Window(width=2),
+        make_btn(" FWD ", "FWD"),
+        Window(width=1),
+        make_btn(" BWD ", "BWD"),
+        Window(width=1),
+        make_btn(" LEFT ", "LEFT"),
+        Window(width=1),
+        make_btn(" RIGHT ", "RIGHT"),
+        Window(width=2),
+        make_btn(" GET ", "GET", "blue"),
+    ], align=WindowAlign.CENTER)
+
+    root_container = HSplit([
+        header_window,
+        body,
+        buttons_row,
+        help_line,
+        input_field
+    ])
+
+    return root_container, input_field
+
+# ---------------------------------------------------------------------------
+# Communication logic
+# ---------------------------------------------------------------------------
+def send_recv(sock, cmd):
     try:
         sock.sendall((cmd.strip() + "\n").encode())
-    except OSError:
-        pass
+        data = b""
+        while True:
+            chunk = sock.recv(1024)
+            data += chunk
+            if b"\n" in chunk: break
+        return data.decode(errors="replace").strip()
+    except:
+        return None
 
-
-# ---------------------------------------------------------------------------
-# GET response parser
-#
-# MCU sends:
-#   KP=x KI=x KD=x MB=x SPD=x LFAC=x RFAC=x RUN=x L=x F=x R=x
-# Returns a dict with float values for every key, or {} on parse failure.
-# ---------------------------------------------------------------------------
-def parse_get(response: str) -> dict:
-    result = {}
-    for token in response.split():
-        if "=" in token:
-            k, _, v = token.partition("=")
-            try:
-                result[k] = float(v)
-            except ValueError:
-                pass
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Derived debug quantities (mirrors the firmware AUTO block exactly)
-# ---------------------------------------------------------------------------
-def derive(state: dict) -> dict:
-    """
-    Compute wall_error, compressed error, and estimated PWM outputs from
-    a parsed GET state dict.  Ki/integral are not tracked client-side so
-    pid_out is an approximation (Kp * compressed only).
-    """
-    if not state:
-        return {}
-
-    kp = state.get("KP", 0.0)
-    mb = state.get("MB", 2.0)
-    spd = state.get("SPD", 42.0)
-    lfac = state.get("LFAC", 1.0)
-    rfac = state.get("RFAC", 1.0)
-    L = state.get("L", 0.0)
-    R = state.get("R", 0.0)
-
-    wall_error = L - R
-    if -mb < wall_error < mb:
-        wall_error = 0.0
-
-    compressed = (
-        SENSITIVITY * math.tanh(wall_error / SENSITIVITY) if wall_error != 0.0 else 0.0
-    )
-
-    # Client-side estimate: Kp term only (no Ki integral history available)
-    pid_est = kp * compressed
-
-    # Right motor is inverted in firmware, so pid_out signs are swapped
-    raw_l = spd - pid_est
-    raw_r = spd + pid_est
-
-    def clamp(v, lo=0, hi=100):
-        return max(lo, min(hi, v))
-
-    pwm_l = clamp(raw_l * lfac)
-    pwm_r = clamp(raw_r * rfac)
-
-    return {
-        "wall_error": wall_error,
-        "compressed": compressed,
-        "pid_est": pid_est,
-        "pwm_l": pwm_l,
-        "pwm_r": pwm_r,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Monitor display
-# ---------------------------------------------------------------------------
-MONITOR_HEADER = (
-    "\n"
-    f"  {'TIME':<10} {'L':>6} {'R':>6} {'F':>6} "
-    f"{'ERR':>7} {'COMP':>7} {'PID≈':>7} "
-    f"{'PWM_L':>6} {'PWM_R':>6}  FLAGS\n" + "  " + "─" * 76
-)
-
-
-def format_monitor_row(ts: str, state: dict, derived: dict) -> str:
-    L = state.get("L", float("nan"))
-    R = state.get("R", float("nan"))
-    F = state.get("F", float("nan"))
-    run = int(state.get("RUN", 0))
-
-    err = derived.get("wall_error", float("nan"))
-    comp = derived.get("compressed", float("nan"))
-    pid_e = derived.get("pid_est", float("nan"))
-    pwml = derived.get("pwm_l", float("nan"))
-    pwmr = derived.get("pwm_r", float("nan"))
-
-    flags = []
-    if not run:
-        flags.append("STOPPED")
-    if abs(err) < state.get("MB", 2.0) and err != 0.0:
-        flags.append("in-deadband")
-    if F < state.get("SPD", 28.0):  # reuse FRONT_OBSTACLE proxy
-        flags.append("FRONT-OBSTACLE")
-    if abs(err) > 15.0:
-        flags.append("NEAR-WALL")
-    elif abs(err) < 3.0 and err != 0.0:
-        flags.append("near-center")
-
-    return (
-        f"  {ts:<10} {L:>6.1f} {R:>6.1f} {F:>6.1f} "
-        f"{err:>+7.2f} {comp:>+7.2f} {pid_e:>+7.2f} "
-        f"{pwml:>6.1f} {pwmr:>6.1f}  {' | '.join(flags)}"
-    )
-
-
-def monitor_loop(sock: socket.socket, interval: float, stop_event: threading.Event):
-    print(MONITOR_HEADER)
+def monitor_loop(sock, state, stop_event):
     while not stop_event.is_set():
         reply = send_recv(sock, "GET")
-        ts = time.strftime("%H:%M:%S")
         if reply:
-            state = parse_get(reply)
-            derived = derive(state)
-            print(format_monitor_row(ts, state, derived))
+            state.update(reply)
         else:
-            print(f"  {ts:<10}  (no reply)")
-        stop_event.wait(interval)
-
-
-# ---------------------------------------------------------------------------
-# Help / presets
-# ---------------------------------------------------------------------------
-HELP_TEXT = """
-Commands
-────────────────────────────────────────────────────────────
-  PID=Kp,Ki,Kd       e.g.  PID=3.0,0.0,1.2
-  MB=<cm>             dead-band margin        e.g.  MB=2.0
-  SPEED=<0-100>       base PWM duty           e.g.  SPEED=42
-
-  Motor scale factors (multiplicative, applied per side after PID):
-    LFAC=<factor>     left  motor scale       e.g.  LFAC=1.08
-    RFAC=<factor>     right motor scale       e.g.  RFAC=0.95
-    Typical range 0.50–2.00.  Both default to 1.0 (no correction).
-    Calibration tip: send SPEED=50, drive straight in AUTO mode.
-    If veering left → raise LFAC or lower RFAC.
-    If veering right → raise RFAC or lower LFAC.
-
-  GET                 full state dump from MCU
-  DATA                live sensor snapshot  L / F / R
-
-  AUTO                switch to autonomous PID centering
-  STOP / GO           halt / resume
-
-  Manual drive (switches to MANUAL mode automatically):
-    F  or  FWD        drive forward
-    B  or  BWD        drive backward
-    L  or  LEFT       pivot left
-    R  or  RIGHT      pivot right
-    S  or  STOP       stop motors
-
-  monitor [N]         live debug table every N s (default 0.5), Ctrl-C to stop
-                      Columns: L  R  F  wall_error  compressed  pid≈  PWM_L  PWM_R
-                      pid≈ is Kp*compressed only (no Ki integral tracked here)
-
-  poll [N]            print raw DATA every N seconds (default 1.0), Ctrl-C to stop
-  <1-6>               send a named preset (see 'presets')
-  presets             list all presets
-  h / help / ?        show this help
-  q / quit            exit
-────────────────────────────────────────────────────────────
-"""
-
-
-def print_help():
-    print(HELP_TEXT)
-    print_presets()
-
-
-def print_presets():
-    print("Presets")
-    print("───────")
-    for key, (label, cmd) in PRESETS.items():
-        print(f"  [{key}]  {label:<45}  →  {cmd}")
-    print()
-
+            state.update(None)
+        time.sleep(0.5)
 
 # ---------------------------------------------------------------------------
-# Live poll thread (raw DATA, kept for quick checks)
+# Main Application
 # ---------------------------------------------------------------------------
-def poll_data(sock: socket.socket, interval: float, stop_event: threading.Event):
-    while not stop_event.is_set():
-        reply = send_recv(sock, "DATA")
-        ts = time.strftime("%H:%M:%S")
-        if reply:
-            print(f"\r  [{ts}]  {reply}          ", end="", flush=True)
-        else:
-            print(f"\r  [{ts}]  (no reply)      ", end="", flush=True)
-        stop_event.wait(interval)
-    print()
+app_cmd_queue = deque()
 
-
-# ---------------------------------------------------------------------------
-# Command dispatch
-# ---------------------------------------------------------------------------
-MANUAL_ALIASES = {
-    "F": "FWD",
-    "FWD": "FWD",
-    "B": "BWD",
-    "BWD": "BWD",
-    "L": "LEFT",
-    "LEFT": "LEFT",
-    "R": "RIGHT",
-    "RIGHT": "RIGHT",
-    "S": "STOP",
-    "STOP": "STOP",
-}
-
-
-def handle_command(raw: str, sock: socket.socket) -> bool:
-    if not raw:
-        return True
-
-    low = raw.lower()
-    up = raw.upper()
-
-    if low in ("q", "quit", "exit"):
-        return False
-
-    if low in ("h", "help", "?"):
-        print_help()
-        return True
-
-    if low == "presets":
-        print_presets()
-        return True
-
-    if raw in PRESETS:
-        label, cmd = PRESETS[raw]
-        print(f"  → {label}: {cmd}")
-        reply = send_recv(sock, cmd)
-        print(f"  MCU: {reply}" if reply else "  (no reply – check connection)")
-        return True
-
-    # monitor [interval]
-    if low.startswith("monitor"):
-        parts = low.split()
-        interval = 0.5
-        if len(parts) == 2:
-            try:
-                interval = float(parts[1])
-            except ValueError:
-                print("  Usage: monitor [seconds]  e.g. monitor 0.5")
-                return True
-        print(f"  Monitor every {interval}s — Ctrl-C to stop")
-        stop_ev = threading.Event()
-        t = threading.Thread(
-            target=monitor_loop, args=(sock, interval, stop_ev), daemon=True
-        )
-        t.start()
-        try:
-            t.join()
-        except KeyboardInterrupt:
-            stop_ev.set()
-            t.join()
-            print("  Monitor stopped.")
-        return True
-
-    # poll [interval]
-    if low.startswith("poll"):
-        parts = low.split()
-        interval = 1.0
-        if len(parts) == 2:
-            try:
-                interval = float(parts[1])
-            except ValueError:
-                print("  Usage: poll [seconds]  e.g. poll 0.5")
-                return True
-        print(f"  Polling DATA every {interval}s — Ctrl-C to stop")
-        stop_ev = threading.Event()
-        t = threading.Thread(
-            target=poll_data, args=(sock, interval, stop_ev), daemon=True
-        )
-        t.start()
-        try:
-            t.join()
-        except KeyboardInterrupt:
-            stop_ev.set()
-            t.join()
-            print("  Poll stopped.")
-        return True
-
-    if up in MANUAL_ALIASES:
-        mcu_cmd = MANUAL_ALIASES[up]
-        send_only(sock, mcu_cmd)
-        try:
-            reply = sock.recv(64).decode(errors="replace").strip()
-            print(f"  MCU: {reply}")
-        except socket.timeout:
-            pass
-        return True
-
-    # Validated commands
-    if up.startswith("PID="):
-        parts = up[4:].split(",")
-        if len(parts) != 3:
-            print("  Usage: PID=Kp,Ki,Kd   e.g. PID=3.0,0.0,1.2")
-            return True
-        try:
-            kp, ki, kd = float(parts[0]), float(parts[1]), float(parts[2])
-        except ValueError:
-            print("  All three values must be numbers.")
-            return True
-        reply = send_recv(sock, f"PID={kp},{ki},{kd}")
-        print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    elif up.startswith("MB="):
-        try:
-            mb = float(up[3:])
-            if mb < 0:
-                raise ValueError
-        except ValueError:
-            print("  Usage: MB=<cm>  e.g. MB=2.0  (must be ≥ 0)")
-            return True
-        reply = send_recv(sock, f"MB={mb}")
-        print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    elif up.startswith("SPEED="):
-        try:
-            spd = int(float(up[6:]))
-            if not (0 <= spd <= 100):
-                raise ValueError
-        except ValueError:
-            print("  Usage: SPEED=<0-100>  e.g. SPEED=42")
-            return True
-        reply = send_recv(sock, f"SPEED={spd}")
-        print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    elif up.startswith("LFAC="):
-        try:
-            fac = float(up[5:])
-            if fac <= 0:
-                raise ValueError
-        except ValueError:
-            print("  Usage: LFAC=<factor>  e.g. LFAC=1.08  (must be > 0)")
-            return True
-        if not (FACTOR_MIN <= fac <= FACTOR_MAX):
-            print(
-                f"  Warning: LFAC={fac:.3f} outside [{FACTOR_MIN}, {FACTOR_MAX}] — sending anyway."
-            )
-        reply = send_recv(sock, f"LFAC={fac}")
-        print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    elif up.startswith("RFAC="):
-        try:
-            fac = float(up[5:])
-            if fac <= 0:
-                raise ValueError
-        except ValueError:
-            print("  Usage: RFAC=<factor>  e.g. RFAC=0.95  (must be > 0)")
-            return True
-        if not (FACTOR_MIN <= fac <= FACTOR_MAX):
-            print(
-                f"  Warning: RFAC={fac:.3f} outside [{FACTOR_MIN}, {FACTOR_MAX}] — sending anyway."
-            )
-        reply = send_recv(sock, f"RFAC={fac}")
-        print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    elif up in ("GET", "DATA", "AUTO", "GO"):
-        reply = send_recv(sock, up)
-        if reply and up == "GET":
-            state = parse_get(reply)
-            derived = derive(state)
-            print(f"  MCU raw  : {reply}")
-            if derived:
-                print(
-                    f"  Derived  : wall_err={derived['wall_error']:+.2f} cm  "
-                    f"compressed={derived['compressed']:+.2f} cm  "
-                    f"pid≈{derived['pid_est']:+.2f}  "
-                    f"PWM_L≈{derived['pwm_l']:.1f}  PWM_R≈{derived['pwm_r']:.1f}"
-                )
-        else:
-            print(f"  MCU: {reply}" if reply else "  (no reply)")
-
-    else:
-        print(f"  Unknown command '{raw}'. Type 'help' for usage.")
-
-    return True
-
-
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(
-        description="WiFi PID tuner – STM32 corridor robot"
-    )
-    parser.add_argument(
-        "host",
-        nargs="?",
-        default=None,
-        help="Robot IP address (printed on serial after WiFi connects)",
-    )
-    parser.add_argument("port", nargs="?", type=int, default=DEFAULT_PORT)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("host", help="Robot IP address")
+    parser.add_argument("port", type=int, default=DEFAULT_PORT, help="Port (default 1234)")
     args = parser.parse_args()
 
-    if args.host is None:
-        args.host = input("Robot IP address: ").strip()
-
-    print(f"\nConnecting to {args.host}:{args.port} …")
+    state = RobotState(args.host)
+    
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(RECV_TIMEOUT)
     try:
         sock.connect((args.host, args.port))
-    except (ConnectionRefusedError, OSError) as e:
+        state.connected = True
+    except Exception as e:
         print(f"Connection failed: {e}")
-        sys.exit(1)
-    print("Connected.\n")
+        return
 
-    print_help()
+    root, input_field = create_ui(state)
+    kb = KeyBindings()
 
-    reply = send_recv(sock, "GET")
-    if reply:
-        state = parse_get(reply)
-        derived = derive(state)
-        print(f"  MCU current state → {reply}")
-        if derived:
-            print(
-                f"  Derived           → wall_err={derived['wall_error']:+.2f} cm  "
-                f"compressed={derived['compressed']:+.2f} cm  "
-                f"pid≈{derived['pid_est']:+.2f}  "
-                f"PWM_L≈{derived['pwm_l']:.1f}  PWM_R≈{derived['pwm_r']:.1f}\n"
-            )
+    def quick_cmd(cmd_text):
+        up = cmd_text.upper()
+        state.log(f"> {cmd_text} (hotkey)", "cmd")
+        def run():
+            reply = send_recv(sock, up)
+            if reply:
+                state.log(reply, "mcu")
+                if "KP=" in reply: state.update(reply)
+            else:
+                state.log("No response", "error")
+        threading.Thread(target=run, daemon=True).start()
+
+    # Interactive Drive Keys
+    @kb.add("up")
+    @kb.add("w")
+    def _(event): quick_cmd("FWD")
+
+    @kb.add("down")
+    @kb.add("s")
+    def _(event): quick_cmd("BWD")
+
+    @kb.add("left")
+    @kb.add("a")
+    def _(event): quick_cmd("LEFT")
+
+    @kb.add("right")
+    @kb.add("d")
+    def _(event): quick_cmd("RIGHT")
+
+    @kb.add("space")
+    @kb.add("x")
+    def _(event): quick_cmd("STOP")
+
+    @kb.add("g")
+    def _(event): quick_cmd("GO")
+
+    @kb.add("c-c")
+    @kb.add("q")
+    def _(event):
+        event.app.exit()
+
+    app = Application(
+        layout=Layout(root, focused_element=input_field),
+        key_bindings=kb,
+        full_screen=True,
+        mouse_support=True,
+        refresh_interval=0.2,
+    )
+    state.app = app
+
+    def handle_input(buffer):
+        cmd = buffer.text.strip()
+        if not cmd: return
+        
+        up = cmd.upper()
+        if up in ["Q", "QUIT", "EXIT"]:
+            app.exit()
+            return
+
+        state.log(f"> {cmd}", "cmd")
+        
+        if up == "F": up = "FWD"
+        elif up == "B": up = "BWD"
+        elif up == "L": up = "LEFT"
+        elif up == "R": up = "RIGHT"
+        elif up == "S": up = "STOP"
+        
+        def run_cmd():
+            reply = send_recv(sock, up)
+            if reply:
+                state.log(reply, "mcu")
+                if "KP=" in reply or "SPD=" in reply:
+                    state.update(reply)
+            else:
+                state.log("No response from MCU", "error")
+        
+        threading.Thread(target=run_cmd, daemon=True).start()
+        buffer.reset()
+
+    input_field.accept_handler = handle_input
+
+    stop_event = threading.Event()
+    mon_thread = threading.Thread(target=monitor_loop, args=(sock, state, stop_event), daemon=True)
+    mon_thread.start()
+
+    # Command Execution Loop (check queue)
+    def check_queue():
+        while not stop_event.is_set():
+            if app_cmd_queue:
+                cmd = app_cmd_queue.popleft()
+                quick_cmd(cmd)
+            time.sleep(0.05)
+    
+    threading.Thread(target=check_queue, daemon=True).start()
 
     try:
-        while True:
-            try:
-                raw = input("pid_tuner> ").strip()
-            except (EOFError, KeyboardInterrupt):
-                break
-            if not handle_command(raw, sock):
-                break
+        app.run()
     finally:
+        stop_event.set()
         sock.close()
-        print("\nDisconnected.")
-
+        print("Disconnected.")
 
 if __name__ == "__main__":
     main()

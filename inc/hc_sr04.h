@@ -16,6 +16,7 @@ typedef struct {
     uint32_t first_capture;
     uint32_t second_capture;
     uint8_t is_first_capture;
+    volatile uint8_t done;     /* set by ISR when echo falling edge captured */
     float distance_cm;
 } HC_SR04_t;
 
@@ -25,5 +26,6 @@ void HC_SR04_Trigger(HC_SR04_t *hc_sr04);
 void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04);
 float HC_SR04_GetDistance(HC_SR04_t *hc_sr04);
 void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04);
+uint8_t HC_SR04_IsDone(HC_SR04_t *hc_sr04);
 
 #endif /* HC_SR04_H */

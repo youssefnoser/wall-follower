@@ -26,6 +26,7 @@ void HC_SR04_Init(HC_SR04_t *hc_sr04)
     
     /* Initialize variables */
     hc_sr04->is_first_capture = 1;
+    hc_sr04->done = 0;
     hc_sr04->distance_cm = 0;
     
     /* Set TRIG to LOW */
@@ -52,6 +53,7 @@ void HC_SR04_Trigger(HC_SR04_t *hc_sr04)
 void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04)
 {
     hc_sr04->is_first_capture = 1;
+    hc_sr04->done = 0;
     /* Ensure we are looking for a rising edge at the start of a measurement */
     __HAL_TIM_SET_CAPTUREPOLARITY(hc_sr04->htim, hc_sr04->tim_channel, TIM_INPUTCHANNELPOLARITY_RISING);
     
@@ -92,6 +94,7 @@ void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
         
         /* Distance = (time in microseconds) / 58 */
         hc_sr04->distance_cm = distance_count / 58.0f;
+        hc_sr04->done = 1;
     }
 }
 
@@ -103,4 +106,14 @@ void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
 float HC_SR04_GetDistance(HC_SR04_t *hc_sr04)
 {
     return hc_sr04->distance_cm;
+}
+
+/**
+ * @brief Check if measurement is complete
+ * @param hc_sr04: HC-SR04 handler
+ * @return 1 if done, 0 if still waiting for echo
+ */
+uint8_t HC_SR04_IsDone(HC_SR04_t *hc_sr04)
+{
+    return hc_sr04->done;
 }
