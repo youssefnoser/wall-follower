@@ -963,10 +963,12 @@ bool Wifi_TcpIp_SendDataTcp(uint8_t LinkId, uint16_t dataLen, uint8_t *data) {
   do {
     Wifi_RxClear();
     if (Wifi.TcpIpMultiConnection == false)
+      // sprintf((char *)Wifi.TxBuffer, "AT+CIPSEND=%d\r\n", dataLen);
       sprintf((char *)Wifi.TxBuffer, "AT+CIPSENDBUF=%d\r\n", dataLen);
-    else
+      else
+      // sprintf((char *)Wifi.TxBuffer, "AT+CIPSEND=%d,%d\r\n", LinkId,
       sprintf((char *)Wifi.TxBuffer, "AT+CIPSENDBUF=%d,%d\r\n", LinkId,
-              dataLen);
+      dataLen);
     if (Wifi_SendString((char *)Wifi.TxBuffer) == false)
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
