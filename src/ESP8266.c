@@ -9,43 +9,32 @@
 
 // UART_HandleTypeDef	_WIFI_USART;
 Wifi_t Wifi;
-// #########################################################################################################
+
 bool Wifi_SendRaw(uint8_t *data, uint16_t len) {
   if (len <= _WIFI_TX_SIZE) {
-    // Send the information in data through the UART of the ESP8266
     memcpy(Wifi.TxBuffer, data, len);
     if (HAL_UART_Transmit(&_WIFI_USART, data, len, 900) == HAL_OK)
       return true;
-    else
-      return false;
-  } else
-    return false;
+  }
+  return false;
 }
-// #########################################################################################################
+
 bool Wifi_SendString(char *data) {
   return Wifi_SendRaw((uint8_t *)data, strlen(data));
 }
-// #########################################################################################################
+
 bool Wifi_SendStringAndWait(char *data, uint16_t DelayUs) {
   if (Wifi_SendRaw((uint8_t *)data, strlen(data)) == false)
     return false;
   DWT_Delay_us(DelayUs);
   return true;
 }
-// #########################################################################################################
+
 bool Wifi_WaitForString(uint32_t TimeOut_ms, uint8_t *result,
                         uint8_t CountOfParameter, ...) {
   /*
-   * It uses the CountOfParameter and the Parameters after that to compare with
-   * the information that it was received in the UART RX. If the parameter is in
-   * the received string the functions return a true value and the position of
-   * the parameter (according to the position in the function)
-   *
-   * Ex:
-   * Wifi_WaitForString(_WIFI_WAIT_TIME_LOW,&result,2,"OK","ERROR")
-   *
-   * If the ESP8266 return a AT+OK after the last command, the function is going
-   * to return a true value and the result number would be 1.
+   * Wait for specific strings from ESP8266.
+   * result stores the index (1-based) of the found parameter.
    */
 
   if (result == NULL)
@@ -81,7 +70,7 @@ bool Wifi_WaitForString(uint32_t TimeOut_ms, uint8_t *result,
   }
   return false;
 }
-// #########################################################################################################
+
 bool Wifi_ReturnString(char *result, uint8_t WantWhichOne,
                        char *SplitterChars) {
   if (result == NULL)
@@ -108,7 +97,7 @@ bool Wifi_ReturnString(char *result, uint8_t WantWhichOne,
   strcpy(result, "");
   return false;
 }
-// #########################################################################################################
+
 bool Wifi_ReturnStrings(char *InputString, char *SplitterChars,
                         uint8_t CountOfParameter, ...) {
   if (CountOfParameter == 0)
@@ -137,7 +126,6 @@ bool Wifi_ReturnStrings(char *InputString, char *SplitterChars,
   }
   return false;
 }
-// #########################################################################################################
 bool Wifi_ReturnInteger(int32_t *result, uint8_t WantWhichOne,
                         char *SplitterChars) {
   if ((char *)Wifi.RxBuffer == NULL)
@@ -148,7 +136,6 @@ bool Wifi_ReturnInteger(int32_t *result, uint8_t WantWhichOne,
   *result = atoi((char *)Wifi.RxBuffer);
   return true;
 }
-// #########################################################################################################
 
 bool Wifi_ReturnFloat(float *result, uint8_t WantWhichOne,
                       char *SplitterChars) {
@@ -160,7 +147,6 @@ bool Wifi_ReturnFloat(float *result, uint8_t WantWhichOne,
   *result = atof((char *)Wifi.RxBuffer);
   return true;
 }
-// #########################################################################################################
 void Wifi_RemoveChar(char *str, char garbage) {
   char *src, *dst;
   for (src = dst = str; *src != '\0'; src++) {
@@ -170,7 +156,6 @@ void Wifi_RemoveChar(char *str, char garbage) {
   }
   *dst = '\0';
 }
-// #########################################################################################################
 void Wifi_RxClear(void) {
   /* Only clears the AT-response scratch.  The ring is NOT wiped so async
    * URC / +IPD bytes that arrived before this command are preserved for
@@ -180,9 +165,9 @@ void Wifi_RxClear(void) {
   esp_ring_cmd_mark();
   HAL_UART_Receive_IT(&_WIFI_USART, &Wifi.usartBuff, 1);
 }
-// #########################################################################################################
+
 void Wifi_TxClear(void) { memset(Wifi.TxBuffer, 0, _WIFI_TX_SIZE); }
-// #########################################################################################################
+
 void Wifi_RxCallBack(void) {
   /* Every received byte goes into the ring.  Wifi_WaitForString drains
    * from the cmd cursor; poll_async_events drains from the urc cursor.
@@ -190,14 +175,14 @@ void Wifi_RxCallBack(void) {
   esp_ring_push(Wifi.usartBuff);
   HAL_UART_Receive_IT(&_WIFI_USART, &Wifi.usartBuff, 1);
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
+
+
+
+
 bool Wifi_Init(void) {
   uint8_t result;
   bool returnVal = false;
-  // Clean the variables and start the interruption to work with the UART
+  // Start UART interrupt
   do {
     Wifi_RxClear();
 
@@ -215,9 +200,9 @@ bool Wifi_Init(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
+
 void Wifi_Enable(void) {
-  // It is necessary to set HIGH both pins of the module to work correctly
+  // Set Enable and Reset pins HIGH
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_ENABLE, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_RST, GPIO_PIN_RESET);
   DWT_Delay_us(100);
@@ -225,19 +210,19 @@ void Wifi_Enable(void) {
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_RST, GPIO_PIN_SET);
   HAL_Delay(2000);
 }
-// #########################################################################################################
+
 void Wifi_Disable(void) {
-  // It is necessary to set LOW both pins of the module to disable correctly
+  // Set Enable and Reset pins LOW
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_ENABLE, GPIO_PIN_SET);
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_RST, GPIO_PIN_SET);
   DWT_Delay_us(100);
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_ENABLE, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(_BANK_WIFI_BUTTONS, _BUTTON_RST, GPIO_PIN_RESET);
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
+
+
+
+
 bool Wifi_Restart(void) {
   // Make a restart of the ESP8266 using the AT Commands
 
@@ -250,15 +235,14 @@ bool Wifi_Restart(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_DeepSleep(uint16_t DelayMs) {
   // The ESP8266 enters in Deep-Sleep Mode for the time, which is indicated
 
@@ -271,15 +255,14 @@ bool Wifi_DeepSleep(uint16_t DelayMs) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_FactoryReset(void) {
   uint8_t result;
   bool returnVal = false;
@@ -290,15 +273,14 @@ bool Wifi_FactoryReset(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_Update(void) {
   // Update the version of AT Commands when the device is connected to Internet
 
@@ -310,15 +292,14 @@ bool Wifi_Update(void) {
     if (Wifi_SendString((char *)Wifi.TxBuffer) == false)
       break;
     if (Wifi_WaitForString(1000 * 60 * 5, &result, 2, "OK", "ERROR") == false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_SetRfPower(uint8_t Power_0_to_82) {
   uint8_t result;
   bool returnVal = false;
@@ -329,18 +310,16 @@ bool Wifi_SetRfPower(uint8_t Power_0_to_82) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
+
+
 bool Wifi_SetMode(WifiMode_t WifiMode_) {
   uint8_t result;
   bool returnVal = false;
@@ -351,16 +330,15 @@ bool Wifi_SetMode(WifiMode_t WifiMode_) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     Wifi.Mode = WifiMode_;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_GetMode(void) {
   uint8_t result;
   bool returnVal = false;
@@ -371,9 +349,9 @@ bool Wifi_GetMode(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
 
     if (Wifi_ReturnInteger((int32_t *)&result, 1, ":"))
@@ -394,9 +372,9 @@ bool Wifi_GetMyIp(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     sscanf((char *)Wifi.RxBuffer, "AT+CIFSR\r\r\n+CIFSR:APIP,\"%[^\"]",
            Wifi.MyIP);
@@ -406,10 +384,6 @@ bool Wifi_GetMyIp(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
 bool Wifi_Station_ConnectToAp(char *SSID, char *Pass, char *MAC) {
   uint8_t result;
   bool returnVal = false;
@@ -430,13 +404,12 @@ bool Wifi_Station_ConnectToAp(char *SSID, char *Pass, char *MAC) {
                            "\r\nERROR\r\n", "\r\nFAIL\r\n") == false)
       break;
     if (result >
-        1)   // If the result is higher to 1 is because there were an error
-      break; // in the communication
+        1)   
+      break; 
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_Station_Disconnect(void) {
   uint8_t result;
   bool returnVal = false;
@@ -447,15 +420,14 @@ bool Wifi_Station_Disconnect(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_Station_SetIp(char *IP, char *GateWay, char *NetMask) {
   uint8_t result;
   bool returnVal = false;
@@ -467,16 +439,15 @@ bool Wifi_Station_SetIp(char *IP, char *GateWay, char *NetMask) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     Wifi.StationDhcp = false;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_Station_DhcpEnable(bool Enable) {
   uint8_t result;
   bool returnVal = false;
@@ -490,16 +461,15 @@ bool Wifi_Station_DhcpEnable(bool Enable) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     Wifi.StationDhcp = Enable;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_Station_DhcpIsEnable(void) {
   uint8_t result;
   bool returnVal = false;
@@ -514,13 +484,13 @@ bool Wifi_Station_DhcpIsEnable(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     if (Wifi_ReturnInteger((int32_t *)&result, 1, ":") == false)
       break; // It searches for a ':' Character to know
-             // the next integer value after that
+             
     switch (result) {
     case 0:
       Wifi.StationDhcp = false;
@@ -543,10 +513,6 @@ bool Wifi_Station_DhcpIsEnable(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
 bool Wifi_SoftAp_Create(char *SSID, char *password, uint8_t channel,
                         WifiEncryptionType_t WifiEncryptionType,
                         uint8_t MaxConnections_1_to_4, bool HiddenSSID) {
@@ -565,16 +531,15 @@ bool Wifi_SoftAp_Create(char *SSID, char *password, uint8_t channel,
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
 
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_GetApConnection(void) {
   bool returnVal = false;
   uint8_t result;
@@ -586,9 +551,9 @@ bool Wifi_GetApConnection(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     /*
      * The previous AT Command has a response like the next example:
@@ -624,7 +589,6 @@ bool Wifi_GetApConnection(void) {
   return returnVal;
 }
 
-// #########################################################################################################
 bool Wifi_SoftAp_GetConnectedDevices(void) {
   uint8_t result;
   bool returnVal = false;
@@ -641,9 +605,9 @@ bool Wifi_SoftAp_GetConnectedDevices(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
 
     Wifi_RemoveChar((char *)Wifi.RxBuffer, '\r');
@@ -669,10 +633,6 @@ bool Wifi_SoftAp_GetConnectedDevices(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
-// #########################################################################################################
 bool Wifi_TcpIp_GetConnectionStatus(void) {
   uint8_t result;
   bool returnVal = false;
@@ -685,9 +645,9 @@ bool Wifi_TcpIp_GetConnectionStatus(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     /*
      * it searches for the string STATUS: to know what is the status of the
@@ -722,7 +682,6 @@ bool Wifi_TcpIp_GetConnectionStatus(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_Ping(char *PingTo) {
   uint8_t result;
   bool returnVal = false;
@@ -733,9 +692,9 @@ bool Wifi_TcpIp_Ping(char *PingTo) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_MED, &result, 3, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     if (Wifi_ReturnInteger((int32_t *)&Wifi.TcpIpPingAnswer, 2, "+") == false)
       break;
@@ -743,7 +702,6 @@ bool Wifi_TcpIp_Ping(char *PingTo) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_SetMultiConnection(bool EnableMultiConnections) {
   uint8_t result;
   bool returnVal = false;
@@ -763,7 +721,6 @@ bool Wifi_TcpIp_SetMultiConnection(bool EnableMultiConnections) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_GetMultiConnection(void) {
   uint8_t result;
   bool returnVal = false;
@@ -774,9 +731,9 @@ bool Wifi_TcpIp_GetMultiConnection(void) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     if (Wifi_ReturnInteger((int32_t *)&result, 1, ":") == false)
       break;
@@ -785,7 +742,6 @@ bool Wifi_TcpIp_GetMultiConnection(void) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_StartTcpConnection(uint8_t LinkId, char *RemoteIp,
                                    uint16_t RemotePort, uint16_t TimeOut) {
   uint8_t result;
@@ -804,9 +760,9 @@ bool Wifi_TcpIp_StartTcpConnection(uint8_t LinkId, char *RemoteIp,
         break;
       if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
           false)
-        break; // The timeout was completed and the string was not there
+        break; 
       if (result ==
-          2) // It was find the "ERROR" String in the receiving information
+          2) 
         break;
     }
     Wifi_RxClear();
@@ -827,7 +783,6 @@ bool Wifi_TcpIp_StartTcpConnection(uint8_t LinkId, char *RemoteIp,
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_StartUdpConnection(uint8_t LinkId, char *RemoteIp,
                                    uint16_t RemotePort, uint16_t LocalPort) {
   uint8_t result;
@@ -851,7 +806,6 @@ bool Wifi_TcpIp_StartUdpConnection(uint8_t LinkId, char *RemoteIp,
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_Close(uint8_t LinkId) {
   uint8_t result;
   bool returnVal = false;
@@ -865,15 +819,14 @@ bool Wifi_TcpIp_Close(uint8_t LinkId) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_SetEnableTcpServer(uint16_t PortNumber) {
   uint8_t result;
   bool returnVal = false;
@@ -886,9 +839,9 @@ bool Wifi_TcpIp_SetEnableTcpServer(uint16_t PortNumber) {
         break;
       if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
           false)
-        break; // The timeout was completed and the string was not there
+        break; 
       if (result ==
-          2) // It was find the "ERROR" String in the receiving information
+          2) 
         break;
       Wifi.TcpIpMultiConnection = true;
       Wifi_RxClear();
@@ -898,15 +851,14 @@ bool Wifi_TcpIp_SetEnableTcpServer(uint16_t PortNumber) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_SetDisableTcpServer(uint16_t PortNumber) {
   uint8_t result;
   bool returnVal = false;
@@ -917,15 +869,14 @@ bool Wifi_TcpIp_SetDisableTcpServer(uint16_t PortNumber) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_SendDataUdp(uint8_t LinkId, uint16_t dataLen, uint8_t *data) {
   uint8_t result;
   bool returnVal = false;
@@ -939,24 +890,23 @@ bool Wifi_TcpIp_SendDataUdp(uint8_t LinkId, uint16_t dataLen, uint8_t *data) {
       break;
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, ">", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     Wifi_RxClear();
     // Send in this time the information through the connection
     Wifi_SendRaw(data, dataLen);
     if (Wifi_WaitForString(_WIFI_WAIT_TIME_LOW, &result, 2, "OK", "ERROR") ==
         false)
-      break; // The timeout was completed and the string was not there
+      break; 
     if (result ==
-        2) // It was find the "ERROR" String in the receiving information
+        2) 
       break;
     returnVal = true;
   } while (0);
   return returnVal;
 }
-// #########################################################################################################
 bool Wifi_TcpIp_SendDataTcp(uint8_t LinkId, uint16_t dataLen, uint8_t *data) {
   uint8_t result;
   bool returnVal = false;
@@ -988,4 +938,3 @@ bool Wifi_TcpIp_SendDataTcp(uint8_t LinkId, uint16_t dataLen, uint8_t *data) {
   } while (0);
   return returnVal;
 }
-// #########################################################################################################

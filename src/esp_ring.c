@@ -13,7 +13,7 @@ void esp_ring_init(void)
     head = cmd_tail = urc_tail = 0;
 }
 
-/* ---- ISR side --------------------------------------------------------- */
+/* ISR side */
 
 void esp_ring_push(uint8_t byte)
 {
@@ -28,7 +28,7 @@ void esp_ring_push(uint8_t byte)
     head++;
 }
 
-/* ---- AT-command cursor ------------------------------------------------ */
+/* AT-command cursor */
 
 void esp_ring_cmd_mark(void)
 {
@@ -46,7 +46,7 @@ uint16_t esp_ring_cmd_drain(uint8_t *dst, uint16_t max)
     return avail;
 }
 
-/* ---- URC / +IPD cursor ----------------------------------------------- */
+/* URC / +IPD cursor */
 
 uint16_t esp_ring_urc_available(void)
 {

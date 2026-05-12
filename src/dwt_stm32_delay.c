@@ -1,12 +1,7 @@
 #include "dwt_stm32_delay.h"
 
 
-/**
- * @brief  Initializes DWT_Clock_Cycle_Count for DWT_Delay_us function
- * @return Error DWT counter
- *         1: clock cycle counter not started
- *         0: clock cycle counter works
- */
+/* Initialize DWT for microsecond delays */
 uint32_t DWT_Delay_Init(void) {
   /* Disable TRC */
   CoreDebug->DEMCR &= ~CoreDebug_DEMCR_TRCENA_Msk; // ~0x01000000;

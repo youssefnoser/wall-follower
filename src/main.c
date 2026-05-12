@@ -12,28 +12,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ---- Corridor-centering tuning --------------------------------------- */
+/* Tuning parameters */
 #define CENTER_MARGIN_CM 2.0f /* dead-band around wall_error = 0       */
 #define BASE_SPEED 75         /* nominal forward PWM %                  */
 #define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing               */
 #define SENSITIVITY 20.0f     /* wall-error sensitivity (cm)            */
 #define SPEED_FLOOR 45        /* min PWM % while doing wall correction  */
 
-/* ---- Front-obstacle thresholds --------------------------------------- */
+/* Obstacle thresholds */
 #define FRONT_DECEL_CM 35.0f /* Start slowing down & check for turns   */
 #define FRONT_STOP_CM 20.0f  /* Final stop/dead-end threshold          */
 
-/* ---- Turn / navigation ----------------------------------------------- */
+/* Navigation constants */
 #define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
 #define OPEN_WALL_CM 20.0f    /* side dist above this → wall not present */
 #define DESIRED_WALL_CM 15.0f /* single-wall follow target              */
-/* ---- Turn / navigation (PD) ------------------------------------------ */
+/* PD Turn constants */
 #define TURN_Kp 7.0f
 #define TURN_Kd 0.7f
 #define TURN_MAX_SPEED 70
 #define TURN_MIN_SPEED 35
 #define TURN_STOP_DEG 2.5f
-#define TURN_TIMEOUT_MS 6000
+#define TURN_TIMEOUT_MS 1500
 
 /* Approach zone: when remaining drops below this, we slow down hard */
 #define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
@@ -42,26 +42,26 @@
 
 #define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
-/* ---- Wall-to-heading gain -------------------------------------------- */
+/* Gains */
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.95f
 #define WALL_TO_HEADING_GAIN_D_DEFAULT 0.0f /* s·cm → tune up if sluggish */
 
-/* ---- Heading-hold PD ------------------------------------------------- */
+/* Heading PD */
 #define HEADING_Kp_DEFAULT 2.0f
 #define HEADING_Kd_DEFAULT 0.3f
 
-/* ---- Turn history ---------------------------------------------------- */
+/* Log config */
 #define MAX_TURN_LOG 64
 
-/* ---- Per-side motor scale factors ------------------------------------ */
+/* Motor scaling */
 #define LEFT_MOTOR_FACTOR 1.0f
 #define RIGHT_MOTOR_FACTOR 1.0f
 
-/* ---- WiFi ------------------------------------------------------------ */
-#define WIFI_SSID "ZirnosSpace"
-#define WIFI_PASSWORD "12345678"
+/* WiFi config */
+#define WIFI_SSID "Youssef's A51"
+#define WIFI_PASSWORD "lol123a@@@"
 
-/* ---- Hardware handles ------------------------------------------------ */
+/* Hardware */
 UART_HandleTypeDef huart1;
 L298N_t motor_driver;
 MPU6050_t imu;
@@ -76,7 +76,7 @@ void ADC_Init(void);
 void USART1_UART_Init(void);
 void I2C_Init(void);
 
-/* ---- FSM states ------------------------------------------------------ */
+/* FSM */
 typedef enum {
   STATE_IDLE,       /* stopped, waiting for GO                         */
   STATE_FORWARD,    /* corridor-centering + front obstacle check        */
@@ -85,7 +85,7 @@ typedef enum {
   STATE_DEAD_END,   /* both sides blocked — back up and retry          */
 } RobotState;
 
-/* ---- Runtime state --------------------------------------------------- */
+/* State */
 static int8_t wifi_link = -1;
 static float g_dist_front = 200.0f;
 static float g_filt_left = 100.0f;
@@ -111,12 +111,7 @@ static uint8_t g_turn_count = 0;
 static float g_prev_wall_error = 0.0f;
 static uint32_t g_prev_wall_time = 0;
 
-/* Track regime to catch discontinuities */
-typedef enum { WR_BOTH, WR_RIGHT, WR_LEFT, WR_NONE } WallRegime_t;
-static WallRegime_t g_prev_regime = WR_NONE;
-static float g_wall_error_ema = 0.0f; /* filtered derivative */
-
-/* ---- Runtime-tunable copies of compile-time constants ---------------- */
+/* Tunables */
 static float g_ema_alpha = EMA_ALPHA;
 static float g_sensitivity = SENSITIVITY;
 static int g_speed_floor = SPEED_FLOOR;
@@ -146,62 +141,6 @@ static void turn_log_append(char dir) {
 /* FSM */
 static RobotState g_state = STATE_FORWARD;
 
-static void set_state(RobotState new_state, const char *reason) {
-  if (g_state == new_state)
-    return;
-
-  RobotState old_state = g_state;
-  g_state = new_state;
-
-  const char *s_old = "UNKNOWN";
-  const char *s_new = "UNKNOWN";
-
-  switch (old_state) {
-  case STATE_IDLE:
-    s_old = "IDLE";
-    break;
-  case STATE_FORWARD:
-    s_old = "FORWARD";
-    break;
-  case STATE_TURN_LEFT:
-    s_old = "TURN_LEFT";
-    break;
-  case STATE_TURN_RIGHT:
-    s_old = "TURN_RIGHT";
-    break;
-  case STATE_DEAD_END:
-    s_old = "DEAD_END";
-    break;
-  }
-
-  switch (new_state) {
-  case STATE_IDLE:
-    s_new = "IDLE";
-    break;
-  case STATE_FORWARD:
-    s_new = "FORWARD";
-    break;
-  case STATE_TURN_LEFT:
-    s_new = "TURN_LEFT";
-    break;
-  case STATE_TURN_RIGHT:
-    s_new = "TURN_RIGHT";
-    break;
-  case STATE_DEAD_END:
-    s_new = "DEAD_END";
-    break;
-  }
-
-  printf("[FSM] %s -> %s | Reason: %s\r\n", s_old, s_new, reason);
-
-  if (wifi_link >= 0) {
-    char msg[128];
-    int len = snprintf(msg, sizeof(msg), "EVENT FSM=%s->%s REASON=%s\r\n",
-                       s_old, s_new, reason);
-    Wifi_TcpIp_SendDataTcp((uint8_t)wifi_link, (uint16_t)len, (uint8_t *)msg);
-  }
-}
-
 static void apply_motor(uint8_t motor, int pct) {
   float factor = (motor == MOTOR_LEFT) ? g_left_factor : g_right_factor;
   int v = (int)((float)pct * factor);
@@ -221,35 +160,23 @@ static void apply_motor(uint8_t motor, int pct) {
   L298N_Move(&motor_driver, motor, dir, speed);
 }
 
-/* -----------------------------------------------------------------------
- * move_forward – drive both motors forward at the given percentage.
- * --------------------------------------------------------------------- */
+/* move_forward – drive both motors forward at the given percentage. */
 static void move_forward(int pct) {
   apply_motor(MOTOR_LEFT, pct);
   apply_motor(MOTOR_RIGHT, pct);
 }
 
-/* -----------------------------------------------------------------------
- * move_backward – drive both motors backward at the given percentage.
- * --------------------------------------------------------------------- */
+/* move_backward – drive both motors backward at the given percentage. */
 static void move_backward(int pct) {
   apply_motor(MOTOR_LEFT, -pct);
   apply_motor(MOTOR_RIGHT, -pct);
 }
 
-/* -----------------------------------------------------------------------
- * stop_motors – halt both motors immediately.
- * --------------------------------------------------------------------- */
+/* stop_motors – halt both motors immediately. */
 static void stop_motors(void) { L298N_StopAll(&motor_driver); }
 
-/* -----------------------------------------------------------------------
- * gyro_tick – heading-hold PD inner loop, called every 5 ms.
- *
- * Only active in STATE_FORWARD — cannot interfere with turns.
- * g_target_angle is set each main-loop iteration from the wall error:
- *   Centered  → target ≈ current angle → drive straight
- *   Off-center → target biased inward  → gentle arc back to center
- * --------------------------------------------------------------------- */
+/* gyro_tick – heading-hold PD inner loop.
+ * Updates target angle from wall error to drive straight or arc back. */
 static void gyro_tick(void) {
   if (!(g_running && g_mode == 0 && g_state == STATE_FORWARD))
     return;
@@ -267,10 +194,7 @@ static void gyro_tick(void) {
   apply_motor(MOTOR_RIGHT, (int)raw_r);
 }
 
-/* -----------------------------------------------------------------------
- * sensor_acquire – fire all 3 ultrasonics sequentially.
- * gyro_tick() runs every 5 ms during each echo wait.
- * --------------------------------------------------------------------- */
+/* sensor_acquire – fire all 3 ultrasonics sequentially. */
 #define US_TIMEOUT_MS 40
 #define GYRO_PERIOD_MS 5
 
@@ -295,35 +219,17 @@ static void sensor_acquire(float *out_front, float *out_left,
   *out_right = HC_SR04_GetDistance(&ultrasonic_right);
 }
 
-/* -----------------------------------------------------------------------
- * snap_to_cardinal – round to nearest 90° axis before adding turn delta.
- * Absorbs any drift/collision offset so turns always land on the grid.
- * --------------------------------------------------------------------- */
-static float snap_to_cardinal(float angle) {
-  return roundf(angle / 90.0f) * 90.0f;
-}
-
-/* -----------------------------------------------------------------------
- * do_turn – blocking IMU-guided tank turn.
- *
- *   delta_deg > 0 → LEFT  (CCW: left motor backward, right forward)
- *   delta_deg < 0 → RIGHT (CW:  left motor forward,  right backward)
- *
- * g_state must be STATE_TURN_LEFT/RIGHT before calling so gyro_tick()
- * does not interfere. After completion g_target_angle is updated so
- * corridor-centering resumes from the new heading with no jump.
- * --------------------------------------------------------------------- */
+/* do_turn – blocking IMU-guided tank turn. */
 static void do_turn(float delta_deg) {
   if (fabsf(delta_deg) < 1.0f) {
-    printf("[TURN] delta too small, skipped\r\n");
+    printf("turn: delta too small, skipping\n");
     return;
   }
 
   MPU6050_UpdateAngle(&imu);
-  float snapped = snap_to_cardinal(imu.angle_z);
-  float target = snapped + delta_deg;
-  printf("[TURN] start=%.1f  snapped=%.1f  target=%.1f  delta=%.1f\r\n",
-         imu.angle_z, snapped, target, delta_deg);
+  float target = imu.angle_z + delta_deg;
+  printf("turn: start=%.1f target=%.1f delta=%.1f\n", imu.angle_z, target,
+         delta_deg);
 
   uint32_t t_start = HAL_GetTick();
   uint32_t last_print = t_start;
@@ -342,7 +248,7 @@ static void do_turn(float delta_deg) {
       break;
 
     if ((HAL_GetTick() - t_start) >= g_turn_timeout_ms) {
-      printf("[TURN] TIMEOUT\r\n");
+      printf("turn: timeout!\n");
       break;
     }
 
@@ -372,7 +278,7 @@ static void do_turn(float delta_deg) {
 
     if (HAL_GetTick() - last_print >= 100) {
       last_print = HAL_GetTick();
-      printf("[TURN] angle=%+7.2f rem=%+6.2f out=%.1f rate=%.1f\r\n",
+      printf("turn: angle=%+7.2f rem=%+6.2f out=%.1f rate=%.1f\n",
              imu.angle_z, remaining, output, rate_z);
     }
     HAL_Delay(5);
@@ -397,14 +303,11 @@ static void do_turn(float delta_deg) {
 
   g_target_angle = imu.angle_z; /* resume corridor-centering from here */
   float error = imu.angle_z - target;
-  printf("[TURN] done final=%+.2f target=%+.2f error=%+.2f\r\n", imu.angle_z,
+  printf("turn: done. final=%+.2f target=%+.2f error=%+.2f\n", imu.angle_z,
          target, error);
 }
 
-/* -----------------------------------------------------------------------
- * choose_turn – left-preference turn decision.
- *   +1 = turn left   -1 = turn right   0 = dead end
- * --------------------------------------------------------------------- */
+/* choose_turn – left-preference turn decision. */
 static int8_t choose_turn(float dist_left, float dist_right) {
   if (dist_left > g_d_far_cm)
     return 1;
@@ -413,9 +316,7 @@ static int8_t choose_turn(float dist_left, float dist_right) {
   return 0;
 }
 
-/* -----------------------------------------------------------------------
- * poll_wifi
- * --------------------------------------------------------------------- */
+/* poll_wifi */
 static void poll_wifi(float *margin, uint8_t *running) {
   char snap[128];
   uint16_t len = esp_ring_urc_peek((uint8_t *)snap, sizeof(snap) - 1);
@@ -670,14 +571,14 @@ static void poll_wifi(float *margin, uint8_t *running) {
         } else if (strncmp(payload, "STOP", 4) == 0) {
           *running = 0;
           g_manual_cmd = 0;
-          set_state(STATE_IDLE, "STOP_CMD");
+          g_state = STATE_IDLE;
           alen = snprintf(ack, sizeof(ack), "OK STOPPED\r\n");
 
         } else if (strncmp(payload, "GO", 2) == 0 ||
                    strncmp(payload, "AUTO", 4) == 0) {
           g_mode = 0;
           *running = 1;
-          set_state(STATE_FORWARD, "AUTO_CMD");
+          g_state = STATE_FORWARD;
           alen = snprintf(ack, sizeof(ack), "OK AUTO\r\n");
 
         } else if (strncmp(payload, "FWD", 3) == 0) {
@@ -727,9 +628,7 @@ static void poll_wifi(float *margin, uint8_t *running) {
     esp_ring_urc_consume(pos);
 }
 
-/* -----------------------------------------------------------------------
- * main
- * --------------------------------------------------------------------- */
+/* main */
 int main(void) {
   HAL_Init();
   SystemClock_Config();
@@ -753,14 +652,14 @@ int main(void) {
     uint8_t who = 0;
     HAL_StatusTypeDef rc = HAL_I2C_Mem_Read(imu.hi2c, MPU6050_ADDR << 1, 0x75,
                                             I2C_MEMADD_SIZE_8BIT, &who, 1, 200);
-    printf("[IMU] WHO_AM_I=0x%02X  I2C=%s\r\n", who,
+    printf("imu: WHO_AM_I=0x%02X  I2C=%s\n", who,
            (rc == HAL_OK) ? "OK" : "FAIL");
   }
   MPU6050_Init(&imu);
   MPU6050_SetDLPF(&imu, MPU6050_DLPF_44HZ);
-  printf("[IMU] Calibrating...\r\n");
+  printf("imu: calibrating...\n");
   MPU6050_Calibrate(&imu, 500);
-  printf("[IMU] offset=%.4f\r\n", imu.gyro_z_offset);
+  printf("imu: offset=%.4f\n", imu.gyro_z_offset);
 
   float margin = CENTER_MARGIN_CM;
   uint8_t running = 1;
@@ -796,7 +695,7 @@ int main(void) {
      * ============================================================== */
     if (!running) {
       L298N_StopAll(&motor_driver);
-      set_state(STATE_IDLE, "RUN_FLAG_OFF");
+      g_state = STATE_IDLE;
 
     } else if (g_mode == 1) {
       /* ---- MANUAL -------------------------------------------- */
@@ -821,15 +720,15 @@ int main(void) {
       }
 
     } else {
-      /* ---- AUTO FSM ------------------------------------------ */
+      /* AUTO FSM */
       switch (g_state) {
 
-      /* -------------------------------------------------------- */
+
       case STATE_IDLE:
         L298N_StopAll(&motor_driver);
         break;
 
-      /* -------------------------------------------------------- */
+
       case STATE_FORWARD: {
         /*
          * Wall-error: single-wall aware.
@@ -842,15 +741,15 @@ int main(void) {
         uint8_t left_open = (g_filt_left > g_open_wall_cm);
         uint8_t right_open = (g_filt_right > g_open_wall_cm);
 
-        if (!left_open && !right_open) {
-          wall_error = g_filt_right - g_filt_left;
-        } else if (!right_open) {
-          wall_error = g_filt_right - g_desired_wall_cm;
-        } else if (!left_open) {
-          wall_error = g_desired_wall_cm - g_filt_left;
-        } else {
-          wall_error = 0.0f;
-        }
+        // if (!left_open && !right_open) {
+        //   wall_error = g_filt_right - g_filt_left;
+        // } else if (!right_open) {
+        //   wall_error = g_filt_right - g_desired_wall_cm;
+        // } else if (!left_open) {
+        wall_error = g_desired_wall_cm - g_filt_left;
+        // } else {
+        //   wall_error = 0.0f;
+        // }
 
         if (wall_error > -margin && wall_error < margin)
           wall_error = 0.0f;
@@ -874,45 +773,25 @@ int main(void) {
         float effective_base = (float)g_base_speed * (1.0f - t_combined) +
                                (float)g_speed_floor * t_combined;
 
-        /* ---- PD heading target --------------------------------------------
-         */
-        WallRegime_t regime = (!left_open && !right_open) ? WR_BOTH
-                              : (!right_open)             ? WR_RIGHT
-                              : (!left_open)              ? WR_LEFT
-                                                          : WR_NONE;
 
         uint32_t wall_now = HAL_GetTick();
         float wall_dt = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
+
+        /* Suppress derivative on first entry or after a long gap (state
+           re-entry after a turn would produce a giant spike otherwise). */
         float d_wall_error = 0.0f;
-
-        bool regime_changed = (regime != g_prev_regime);
-        bool dt_ok = (wall_dt > 0.005f && wall_dt < 0.3f);
-
-        if (dt_ok && !regime_changed) {
-          float raw_d = (wall_error - g_prev_wall_error) / wall_dt;
-
-          /* clamp before EMA — one spike can't poison the filter */
-          if (raw_d > 15.0f)
-            raw_d = 15.0f;
-          if (raw_d < -15.0f)
-            raw_d = -15.0f;
-
-          /* EMA on the derivative (tu = ~3 ticks ≈ smooth enough) */
-          g_wall_error_ema = 0.35f * raw_d + 0.65f * g_wall_error_ema;
-          d_wall_error = g_wall_error_ema;
-        }
+        if (wall_dt > 0.005f && wall_dt < 0.5f)
+          d_wall_error = (wall_error - g_prev_wall_error) / wall_dt;
 
         g_prev_wall_error = wall_error;
         g_prev_wall_time = wall_now;
-        g_prev_regime = regime;
 
         g_target_angle = imu.angle_z - wall_error * g_wall_gain -
                          d_wall_error * g_wall_gain_d;
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
-        printf("[FSM] FWD | L:%.1f R:%.1f F:%.1f "
-               "Err:%.1f TGT:%.1f ANG:%.1f BASE:%d\r\n",
+        printf("fsm: fwd | l:%.1f r:%.1f f:%.1f err:%.1f tgt:%.1f ang:%.1f base:%d\n",
                g_filt_left, g_filt_right, g_dist_front, wall_error,
                g_target_angle, imu.angle_z, (int)effective_base);
 
@@ -931,26 +810,27 @@ int main(void) {
           L298N_StopAll(&motor_driver);
           HAL_Delay(80); /* chassis settle */
 
-          printf("[FSM] STOPPED | F:%.1f L:%.1f R:%.1f (Early:%d)\r\n",
+          printf("fsm: stopped | f:%.1f l:%.1f r:%.1f (early:%d)\n",
                  g_dist_front, g_filt_left, g_filt_right, should_turn_early);
 
           int8_t dir = choose_turn(g_filt_left, g_filt_right);
-          const char *r = should_turn_early ? "EARLY_OPENING" : "FRONT_BLOCKED";
-
           if (dir > 0) {
+            printf("fsm: -> turn left (l=%.1f)\n", g_filt_left);
             turn_log_append('L');
-            set_state(STATE_TURN_LEFT, r);
+            g_state = STATE_TURN_LEFT;
           } else if (dir < 0) {
+            printf("fsm: -> turn right (r=%.1f)\n", g_filt_right);
             turn_log_append('R');
-            set_state(STATE_TURN_RIGHT, r);
+            g_state = STATE_TURN_RIGHT;
           } else {
-            set_state(STATE_DEAD_END, r);
+            printf("fsm: -> dead end\n");
+            g_state = STATE_DEAD_END;
           }
         }
         break;
       }
 
-      /* -------------------------------------------------------- */
+
       case STATE_TURN_LEFT:
         do_turn(+g_turn_angle_deg);
         { /* flush EMA with first real post-turn reading */
@@ -960,10 +840,11 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        set_state(STATE_FORWARD, "TURN_DONE");
+        g_state = STATE_FORWARD;
+        printf("fsm: -> forward after left turn\n");
         break;
 
-      /* -------------------------------------------------------- */
+
       case STATE_TURN_RIGHT:
         do_turn(-g_turn_angle_deg);
         {
@@ -973,12 +854,13 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        set_state(STATE_FORWARD, "TURN_DONE");
+        g_state = STATE_FORWARD;
+        printf("fsm: -> forward after right turn\n");
         break;
 
-      /* -------------------------------------------------------- */
+
       case STATE_DEAD_END: {
-        printf("[FSM] DEAD_END — backing up\r\n");
+        printf("fsm: dead end — backing up\n");
 
         move_backward((int)((float)g_base_speed * 0.7f));
         HAL_Delay(400);
@@ -993,22 +875,25 @@ int main(void) {
 
         int8_t dir = choose_turn(g_filt_left, g_filt_right);
         if (dir > 0) {
+          printf("fsm: -> turn left after backup\n");
           turn_log_append('L');
-          set_state(STATE_TURN_LEFT, "BACKUP_FIND_LEFT");
+          g_state = STATE_TURN_LEFT;
         } else if (dir < 0) {
+          printf("fsm: -> turn right after backup\n");
           turn_log_append('R');
-          set_state(STATE_TURN_RIGHT, "BACKUP_FIND_RIGHT");
+          g_state = STATE_TURN_RIGHT;
         } else {
+          printf("fsm: -> idle (true dead end)\n");
           L298N_StopAll(&motor_driver);
           running = 0;
           g_running = 0;
-          set_state(STATE_IDLE, "BACKUP_DEAD_END");
+          g_state = STATE_IDLE;
         }
         break;
       }
 
       default:
-        set_state(STATE_IDLE, "FSM_ERROR");
+        g_state = STATE_IDLE;
         break;
       }
     }

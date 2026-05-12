@@ -11,32 +11,30 @@
 static int8_t   active_link      = -1;
 static uint32_t last_report_tick = 0;
 
-/* -----------------------------------------------------------------------
- * Private helpers
- * --------------------------------------------------------------------- */
+/* Helpers */
 
 static void execute_cmd(const char *cmd, L298N_t *motors) {
   if (strncmp(cmd, "FORWARD", 7) == 0) {
     L298N_Move(motors, MOTOR_LEFT,  MOTOR_FORWARD,  WIFI_CTRL_SPEED);
     L298N_Move(motors, MOTOR_RIGHT, MOTOR_FORWARD,  WIFI_CTRL_SPEED);
-    printf("[Motor] FORWARD speed=%d\n", WIFI_CTRL_SPEED);
+    printf("motor: forward speed=%d\n", WIFI_CTRL_SPEED);
   } else if (strncmp(cmd, "BACK", 4) == 0) {
     L298N_Move(motors, MOTOR_LEFT,  MOTOR_BACKWARD, WIFI_CTRL_SPEED);
     L298N_Move(motors, MOTOR_RIGHT, MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    printf("[Motor] BACK speed=%d\n", WIFI_CTRL_SPEED);
+    printf("motor: back speed=%d\n", WIFI_CTRL_SPEED);
   } else if (strncmp(cmd, "LEFT", 4) == 0) {
     L298N_Move(motors, MOTOR_LEFT,  MOTOR_BACKWARD, WIFI_CTRL_SPEED);
     L298N_Move(motors, MOTOR_RIGHT, MOTOR_FORWARD,  WIFI_CTRL_SPEED);
-    printf("[Motor] LEFT speed=%d\n", WIFI_CTRL_SPEED);
+    printf("motor: left speed=%d\n", WIFI_CTRL_SPEED);
   } else if (strncmp(cmd, "RIGHT", 5) == 0) {
     L298N_Move(motors, MOTOR_LEFT,  MOTOR_FORWARD,  WIFI_CTRL_SPEED);
     L298N_Move(motors, MOTOR_RIGHT, MOTOR_BACKWARD, WIFI_CTRL_SPEED);
-    printf("[Motor] RIGHT speed=%d\n", WIFI_CTRL_SPEED);
+    printf("motor: right speed=%d\n", WIFI_CTRL_SPEED);
   } else if (strncmp(cmd, "STOP", 4) == 0) {
     L298N_StopAll(motors);
-    printf("[Motor] STOP\n");
+    printf("motor: stop\n");
   } else {
-    printf("[Motor] unknown cmd: %s\n", cmd);
+    printf("motor: unknown cmd: %s\n", cmd);
   }
 }
 
@@ -64,7 +62,7 @@ static void send_sensor_report(HC_SR04_t *front, HC_SR04_t *left,
   if (n > (int)sizeof(report)) n = (int)sizeof(report);
 
   Wifi_TcpIp_SendDataTcp((uint8_t)active_link, (uint16_t)n, (uint8_t *)report);
-  printf("[WiFi] sensors: %s", report);
+  printf("wifi: sensors: %s", report);
 }
 
 /* Parse one async event from the start of buf[0..len).
@@ -91,7 +89,7 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
       active_link = (int8_t)id;
       if (cp > 0) {
         execute_cmd(payload, motors);
-        printf("[WiFi] cmd from link %d: %s\n", id, payload);
+        printf("wifi: cmd from link %d: %s\n", id, payload);
       }
       return hdr + (uint16_t)n;
     }
@@ -104,7 +102,7 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
       const char *eol = strchr(buf, '\n');
       if (!eol) return 0;
       active_link = (int8_t)(buf[0] - '0');
-      printf("[WiFi] client %d connected.\n", active_link);
+      printf("wifi: client %d connected.\n", active_link);
       return (uint16_t)(eol - buf) + 1;
     }
     if (len >= 8 && strncmp(buf + 2, "CLOSED", 6) == 0) {
@@ -114,7 +112,7 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
       if (active_link == cid) {
         active_link = -1;
         L298N_StopAll(motors);
-        printf("[WiFi] client disconnected. Motors stopped.\n");
+        printf("wifi: client disconnected. motors stopped.\n");
       }
       return (uint16_t)(eol - buf) + 1;
     }
@@ -142,9 +140,7 @@ static void poll_async_events(L298N_t *motors) {
     esp_ring_urc_consume(esp_ring_urc_available());
 }
 
-/* -----------------------------------------------------------------------
- * Public API
- * --------------------------------------------------------------------- */
+/* Public API */
 
 /* Maximum number of WiFi connection attempts before giving up. */
 #define WIFI_MAX_RETRIES     3
@@ -164,61 +160,61 @@ void WiFiControl_Init(const char *ssid, const char *password) {
    */
   extern L298N_t motor_driver;
   L298N_StopAll(&motor_driver);
-  printf("[WiFi] Motors stopped – reserving current for ESP8266.\n");
+  printf("wifi: motors stopped – reserving current for ESP8266.\n");
 
   /* Give the ESP8266 plenty of boot time. */
   HAL_Delay(WIFI_BOOT_DELAY_MS);
 
-  /* ---- AT handshake with retry -------------------------------------- */
+  /* AT handshake with retry */
   bool esp_ok = false;
   for (uint8_t attempt = 1; attempt <= WIFI_MAX_RETRIES; attempt++) {
-    printf("[WiFi] Init attempt %d/%d ...\n", attempt, WIFI_MAX_RETRIES);
+  printf("wifi: Init attempt %d/%d ...\n", attempt, WIFI_MAX_RETRIES);
 
     if (Wifi_Init()) {
       esp_ok = true;
       break;
     }
-    printf("[WiFi] AT handshake failed, retrying after reset ...\n");
+    printf("wifi: AT handshake failed, retrying after reset ...\n");
     /* Hard-reset the module and wait for reboot */
     Wifi_Restart();
     HAL_Delay(WIFI_BOOT_DELAY_MS);
   }
   if (!esp_ok) {
-    printf("[WiFi] ESP8266 not responding after %d attempts. "
+    printf("wifi: ESP8266 not responding after %d attempts. "
            "Check wiring/power!\n", WIFI_MAX_RETRIES);
     return;
   }
-  printf("[WiFi] ESP8266 ready.\n");
+  printf("wifi: ESP8266 ready.\n");
 
-  /* ---- Set station mode --------------------------------------------- */
+  /* Set station mode */
   if (!Wifi_SetMode(WifiMode_Station)) {
-    printf("[WiFi] Failed to set WiFi mode.\n");
+    printf("wifi: Failed to set WiFi mode.\n");
     return;
   }
 
-  /* ---- Connect to AP with retry ------------------------------------- */
+  /* Connect to AP with retry */
   bool connected = false;
   for (uint8_t attempt = 1; attempt <= WIFI_MAX_RETRIES; attempt++) {
-    printf("[WiFi] Connecting to \"%s\" (attempt %d/%d) ...\n",
+    printf("wifi: Connecting to \"%s\" (attempt %d/%d) ...\n",
            ssid, attempt, WIFI_MAX_RETRIES);
 
     if (Wifi_Station_ConnectToAp((char *)ssid, (char *)password, NULL)) {
       connected = true;
       break;
     }
-    printf("[WiFi] Connection attempt %d failed.\n", attempt);
+    printf("wifi: Connection attempt %d failed.\n", attempt);
     HAL_Delay(2000); /* cool-down between retries */
   }
   if (!connected) {
-    printf("[WiFi] WiFi connection FAILED after %d attempts.\n",
+    printf("wifi: WiFi connection FAILED after %d attempts.\n",
            WIFI_MAX_RETRIES);
-    printf("[WiFi] Possible causes:\n");
-    printf("[WiFi]   - Battery too low (ESP8266 needs ~300mA peak)\n");
-    printf("[WiFi]   - SSID/password mismatch\n");
-    printf("[WiFi]   - Phone hotspot not active\n");
+    printf("wifi: Possible causes:\n");
+    printf("wifi:   - Battery too low (ESP8266 needs ~300mA peak)\n");
+    printf("wifi:   - SSID/password mismatch\n");
+    printf("wifi:   - Phone hotspot not active\n");
     return;
   }
-  printf("[WiFi] WiFi connected!\n");
+  printf("wifi: WiFi connected!\n");
 
   /*
    * Lower the ESP8266 RF TX power after connecting.
@@ -232,23 +228,23 @@ void WiFiControl_Init(const char *ssid, const char *password) {
   Wifi_RxClear();
 
   if (!Wifi_TcpIp_SetMultiConnection(true)) {
-    printf("[WiFi] Failed to enable multi-connection.\n");
+    printf("wifi: Failed to enable multi-connection.\n");
     return;
   }
 
   if (!Wifi_TcpIp_SetEnableTcpServer(WIFI_TCP_PORT)) {
-    printf("[WiFi] Failed to start TCP server.\n");
+    printf("wifi: Failed to start TCP server.\n");
     return;
   }
 
   if (Wifi_GetMyIp())
-    printf("[WiFi] Local IP: %s\n", Wifi.MyIP);
+    printf("wifi: Local IP: %s\n", Wifi.MyIP);
   else
-    printf("[WiFi] Could not read local IP.\n");
+    printf("wifi: Could not read local IP.\n");
 
   Wifi_RxClear();
-  printf("[WiFi] Control server ready on port %d.\n", WIFI_TCP_PORT);
-  printf("[WiFi] Commands: FORWARD | BACK | LEFT | RIGHT | STOP\n");
+  printf("wifi: Control server ready on port %d.\n", WIFI_TCP_PORT);
+  printf("wifi: Commands: FORWARD | BACK | LEFT | RIGHT | STOP\n");
 }
 
 void WiFiControl_Update(L298N_t *motors, HC_SR04_t *front, HC_SR04_t *left,

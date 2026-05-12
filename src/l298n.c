@@ -1,9 +1,6 @@
 #include "l298n.h"
 
-/**
- * @brief Initialize L298N Motor Driver
- * @param h_motor: L298N handler
- */
+/* Initialize L298N Motor Driver */
 void L298N_Init(L298N_t *h_motor)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -29,12 +26,7 @@ void L298N_Init(L298N_t *h_motor)
     L298N_StopAll(h_motor);
 }
 
-/**
- * @brief Set motor speed using PWM
- * @param h_motor: L298N handler
- * @param motor: MOTOR_LEFT or MOTOR_RIGHT
- * @param speed: Speed value (0-100)
- */
+/* Set motor speed (0-100) */
 void L298N_SetSpeed(L298N_t *h_motor, uint8_t motor, uint8_t speed)
 {
     L298N_Motor_t *motor_ptr;
@@ -52,12 +44,7 @@ void L298N_SetSpeed(L298N_t *h_motor, uint8_t motor, uint8_t speed)
     }
 }
 
-/**
- * @brief Set motor direction
- * @param h_motor: L298N handler
- * @param motor: MOTOR_LEFT or MOTOR_RIGHT
- * @param direction: MOTOR_FORWARD or MOTOR_BACKWARD
- */
+/* Set motor direction */
 void L298N_SetDirection(L298N_t *h_motor, uint8_t motor, uint8_t direction)
 {
     L298N_Motor_t *motor_ptr =
@@ -76,24 +63,14 @@ void L298N_SetDirection(L298N_t *h_motor, uint8_t motor, uint8_t direction)
     }
 }
 
-/**
- * @brief Move motor with direction and speed
- * @param h_motor: L298N handler
- * @param motor: MOTOR_LEFT or MOTOR_RIGHT
- * @param direction: MOTOR_FORWARD or MOTOR_BACKWARD
- * @param speed: Speed value (0-100)
- */
+/* Move motor */
 void L298N_Move(L298N_t *h_motor, uint8_t motor, uint8_t direction, uint8_t speed)
 {
     L298N_SetDirection(h_motor, motor, direction);
     L298N_SetSpeed(h_motor, motor, speed);
 }
 
-/**
- * @brief Stop a single motor
- * @param h_motor: L298N handler
- * @param motor: MOTOR_LEFT or MOTOR_RIGHT
- */
+/* Stop a single motor */
 void L298N_Stop(L298N_t *h_motor, uint8_t motor)
 {
     L298N_Motor_t *motor_ptr =
@@ -105,10 +82,7 @@ void L298N_Stop(L298N_t *h_motor, uint8_t motor)
     L298N_SetSpeed(h_motor, motor, 0);
 }
 
-/**
- * @brief Stop all motors
- * @param h_motor: L298N handler
- */
+/* Stop all motors */
 void L298N_StopAll(L298N_t *h_motor)
 {
     L298N_Stop(h_motor, MOTOR_LEFT);

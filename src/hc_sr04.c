@@ -1,9 +1,6 @@
 #include "hc_sr04.h"
 
-/**
- * @brief Initialize HC-SR04 Ultrasonic Sensor
- * @param hc_sr04: HC-SR04 handler
- */
+/* Initialize HC-SR04 */
 void HC_SR04_Init(HC_SR04_t *hc_sr04)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -33,10 +30,7 @@ void HC_SR04_Init(HC_SR04_t *hc_sr04)
     HAL_GPIO_WritePin(hc_sr04->TRIG_PORT, hc_sr04->TRIG_PIN, GPIO_PIN_RESET);
 }
 
-/**
- * @brief Send trigger pulse to HC-SR04
- * @param hc_sr04: HC-SR04 handler
- */
+/* Send trigger pulse */
 void HC_SR04_Trigger(HC_SR04_t *hc_sr04)
 {
     /* Send 10us pulse */
@@ -46,10 +40,7 @@ void HC_SR04_Trigger(HC_SR04_t *hc_sr04)
     HAL_GPIO_WritePin(hc_sr04->TRIG_PORT, hc_sr04->TRIG_PIN, GPIO_PIN_RESET);
 }
 
-/**
- * @brief Start measurement (trigger + start input capture)
- * @param hc_sr04: HC-SR04 handler
- */
+/* Start measurement */
 void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04)
 {
     hc_sr04->is_first_capture = 1;
@@ -61,10 +52,7 @@ void HC_SR04_StartMeasurement(HC_SR04_t *hc_sr04)
     HC_SR04_Trigger(hc_sr04);
 }
 
-/**
- * @brief Handle echo pin state change (called from interrupt handler)
- * @param hc_sr04: HC-SR04 handler
- */
+/* Echo callback (called from interrupt) */
 void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
 {
     if (hc_sr04->is_first_capture)
@@ -98,21 +86,13 @@ void HC_SR04_Echo_Callback(HC_SR04_t *hc_sr04)
     }
 }
 
-/**
- * @brief Get measured distance in cm
- * @param hc_sr04: HC-SR04 handler
- * @return Distance in centimeters
- */
+/* Get distance in cm */
 float HC_SR04_GetDistance(HC_SR04_t *hc_sr04)
 {
     return hc_sr04->distance_cm;
 }
 
-/**
- * @brief Check if measurement is complete
- * @param hc_sr04: HC-SR04 handler
- * @return 1 if done, 0 if still waiting for echo
- */
+/* Check if done */
 uint8_t HC_SR04_IsDone(HC_SR04_t *hc_sr04)
 {
     return hc_sr04->done;

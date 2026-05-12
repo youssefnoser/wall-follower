@@ -2,10 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/**
- * @brief Initialize MPU6050 IMU
- * @param mpu6050: MPU6050 handler
- */
+/* Initialize MPU6050 */
 void MPU6050_Init(MPU6050_t *mpu6050) {
   uint8_t data = 0;
 
@@ -43,50 +40,27 @@ void MPU6050_Init(MPU6050_t *mpu6050) {
   mpu6050->last_time = HAL_GetTick();
 }
 
-/**
- * @brief Configure the Digital Low Pass Filter (DLPF)
- * @param mpu6050: MPU6050 handler
- * @param dlpf_cfg: DLPF config value (0-6)
- */
+/* Configure DLPF */
 void MPU6050_SetDLPF(MPU6050_t *mpu6050, uint8_t dlpf_cfg) {
   MPU6050_WriteRegister(mpu6050, MPU6050_CONFIG, dlpf_cfg);
   HAL_Delay(10); /* Short delay for config to apply */
 }
 
-/**
- * @brief Write to MPU6050 register
- * @param mpu6050: MPU6050 handler
- * @param reg: Register address
- * @param value: Value to write
- * @return HAL status
- */
+/* Write register */
 HAL_StatusTypeDef MPU6050_WriteRegister(MPU6050_t *mpu6050, uint8_t reg,
                                         uint8_t value) {
   return HAL_I2C_Mem_Write(mpu6050->hi2c, mpu6050->i2c_addr << 1, reg,
                            I2C_MEMADD_SIZE_8BIT, &value, 1, HAL_MAX_DELAY);
 }
 
-/**
- * @brief Read from MPU6050 register
- * @param mpu6050: MPU6050 handler
- * @param reg: Register address
- * @param value: Pointer to store read value
- * @return HAL status
- */
+/* Read register */
 HAL_StatusTypeDef MPU6050_ReadRegister(MPU6050_t *mpu6050, uint8_t reg,
                                        uint8_t *value) {
   return HAL_I2C_Mem_Read(mpu6050->hi2c, mpu6050->i2c_addr << 1, reg,
                           I2C_MEMADD_SIZE_8BIT, value, 1, HAL_MAX_DELAY);
 }
 
-/**
- * @brief Read multiple bytes from MPU6050
- * @param mpu6050: MPU6050 handler
- * @param reg: Starting register address
- * @param data: Pointer to data buffer
- * @param size: Number of bytes to read
- * @return HAL status
- */
+/* Read multiple bytes */
 HAL_StatusTypeDef MPU6050_ReadMultiple(MPU6050_t *mpu6050, uint8_t reg,
                                        uint8_t *data, uint16_t size) {
   memset(data, 0, size);
@@ -94,10 +68,7 @@ HAL_StatusTypeDef MPU6050_ReadMultiple(MPU6050_t *mpu6050, uint8_t reg,
                           I2C_MEMADD_SIZE_8BIT, data, size, HAL_MAX_DELAY);
 }
 
-/**
- * @brief Read accelerometer data
- * @param mpu6050: MPU6050 handler
- */
+/* Read accelerometer */
 void MPU6050_ReadAccelerometer(MPU6050_t *mpu6050) {
   uint8_t data[6];
   int16_t accel_raw_x, accel_raw_y, accel_raw_z;
@@ -114,10 +85,7 @@ void MPU6050_ReadAccelerometer(MPU6050_t *mpu6050) {
   mpu6050->accel.z = accel_raw_z / ACCEL_SCALE_2G;
 }
 
-/**
- * @brief Read gyroscope data
- * @param mpu6050: MPU6050 handler
- */
+/* Read gyroscope */
 void MPU6050_ReadGyroscope(MPU6050_t *mpu6050) {
   uint8_t data[6];
   int16_t gyro_raw_x, gyro_raw_y, gyro_raw_z;
@@ -134,10 +102,7 @@ void MPU6050_ReadGyroscope(MPU6050_t *mpu6050) {
   mpu6050->gyro.z = gyro_raw_z / GYRO_SCALE_2000;
 }
 
-/**
- * @brief Read temperature data
- * @param mpu6050: MPU6050 handler
- */
+/* Read temperature */
 void MPU6050_ReadTemperature(MPU6050_t *mpu6050) {
   uint8_t data[2];
   int16_t temp_raw;
@@ -150,21 +115,14 @@ void MPU6050_ReadTemperature(MPU6050_t *mpu6050) {
   mpu6050->temperature = (temp_raw / 340.0f) + 36.53f;
 }
 
-/**
- * @brief Read all sensor data (accel, gyro, temp)
- * @param mpu6050: MPU6050 handler
- */
+/* Read all sensor data */
 void MPU6050_ReadAll(MPU6050_t *mpu6050) {
   MPU6050_ReadAccelerometer(mpu6050);
   MPU6050_ReadGyroscope(mpu6050);
   // MPU6050_ReadTemperature(mpu6050);
 }
 
-/**
- * @brief Calibrate MPU6050 Gyro Z axis
- * @param mpu6050: MPU6050 handler
- * @param iterations: Number of samples to average
- */
+/* Calibrate Gyro Z */
 void MPU6050_Calibrate(MPU6050_t *mpu6050, uint16_t iterations) {
   float sum_z = 0.0f;
   for (uint16_t i = 0; i < iterations; i++) {
@@ -178,10 +136,7 @@ void MPU6050_Calibrate(MPU6050_t *mpu6050, uint16_t iterations) {
   }
 }
 
-/**
- * @brief Update the absolute integrated angle based on calibrated gyro Z rate
- * @param mpu6050: MPU6050 handler
- */
+/* Update integrated angle */
 void MPU6050_UpdateAngle(MPU6050_t *mpu6050) {
   uint32_t current_time = HAL_GetTick();
 
