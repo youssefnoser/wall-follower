@@ -4,7 +4,7 @@
 /// updates what it actually carries.
 class Telemetry {
   // Heading-hold PD
-  final double? hkp, hkd, wg;
+  final double? hkp, hkd, wg, wgd;
   // Dead-band margin & base speed
   final double? mb;
   final int? spd;
@@ -33,6 +33,7 @@ class Telemetry {
     this.hkp,
     this.hkd,
     this.wg,
+    this.wgd,
     this.mb,
     this.spd,
     this.lfac,
@@ -70,6 +71,7 @@ class Telemetry {
         hkp: next.hkp ?? hkp,
         hkd: next.hkd ?? hkd,
         wg: next.wg ?? wg,
+        wgd: next.wgd ?? wgd,
         mb: next.mb ?? mb,
         spd: next.spd ?? spd,
         lfac: next.lfac ?? lfac,
@@ -116,6 +118,7 @@ class Telemetry {
       hkp: _f(f('HKP')),
       hkd: _f(f('HKD')),
       wg: _f(f('WG')),
+      wgd: _f(f('WGD')),
       mb: _f(f('MB')),
       spd: _i(f('SPD')) ?? _i(f('SPEED')),
       lfac: _f(f('LFAC')),

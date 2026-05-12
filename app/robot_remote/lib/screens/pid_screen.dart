@@ -12,7 +12,7 @@ class PidScreen extends StatefulWidget {
 
 class _PidScreenState extends State<PidScreen> {
   // Heading hold
-  double hkp = 2.0, hkd = 0.3, wg = 1.5;
+  double hkp = 2.0, hkd = 0.3, wg = 1.5, wgd = 0.08;
   // Dead-band & speed
   double mb = 2.0, speed = 60, speedFloor = 35;
   // Motor factors
@@ -40,6 +40,7 @@ class _PidScreenState extends State<PidScreen> {
     if (t.hkp != null) hkp = t.hkp!;
     if (t.hkd != null) hkd = t.hkd!;
     if (t.wg != null) wg = t.wg!;
+    if (t.wgd != null) wgd = t.wgd!;
     if (t.mb != null) mb = t.mb!;
     if (t.spd != null) speed = t.spd!.toDouble();
     if (t.speedFloor != null) speedFloor = t.speedFloor!.toDouble();
@@ -82,15 +83,21 @@ class _PidScreenState extends State<PidScreen> {
             _slider('HKP', hkp, 0, 10, (v) => setState(() => hkp = v)),
             _slider('HKD', hkd, 0, 5, (v) => setState(() => hkd = v)),
             _slider('WG (wall→hdg)', wg, 0, 5, (v) => setState(() => wg = v)),
+            _slider('WGD (wall d/dt)', wgd, 0, 1,
+                (v) => setState(() => wgd = v)),
             Row(children: [
               Expanded(child: _sendBtn('Send HKP',
                   c ? () => state.send('HKP=${hkp.toStringAsFixed(3)}') : null)),
               const SizedBox(width: 8),
               Expanded(child: _sendBtn('Send HKD',
                   c ? () => state.send('HKD=${hkd.toStringAsFixed(3)}') : null)),
-              const SizedBox(width: 8),
+            ]),
+            Row(children: [
               Expanded(child: _sendBtn('Send WG',
                   c ? () => state.send('WG=${wg.toStringAsFixed(3)}') : null)),
+              const SizedBox(width: 8),
+              Expanded(child: _sendBtn('Send WGD',
+                  c ? () => state.send('WGD=${wgd.toStringAsFixed(4)}') : null)),
             ]),
           ]),
 
