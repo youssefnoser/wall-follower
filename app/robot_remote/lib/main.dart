@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'screens/dashboard_screen.dart';
+import 'screens/fsm_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/manual_screen.dart';
 import 'screens/pid_screen.dart';
@@ -40,11 +41,12 @@ class _Shell extends StatefulWidget {
 class _ShellState extends State<_Shell> {
   int _idx = 0;
 
-  static const _titles = ['Dashboard', 'Manual', 'PID', 'Logs'];
+  static const _titles = ['Dashboard', 'Manual', 'PID', 'Events', 'Logs'];
   static const _pages = [
     DashboardScreen(),
     ManualScreen(),
     PidScreen(),
+    FsmScreen(),
     LogsScreen(),
   ];
 
@@ -69,6 +71,10 @@ class _ShellState extends State<_Shell> {
               icon: Icon(Icons.tune_outlined),
               selectedIcon: Icon(Icons.tune),
               label: 'PID'),
+          NavigationDestination(
+              icon: Icon(Icons.history_outlined),
+              selectedIcon: Icon(Icons.history),
+              label: 'Events'),
           NavigationDestination(
               icon: Icon(Icons.terminal_outlined),
               selectedIcon: Icon(Icons.terminal),

@@ -238,25 +238,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _runCard(RobotState state, int? running) {
     final isRunning = running == 1;
+
+    String stateName = 'UNKNOWN';
+    switch (state.telemetry.state) {
+      case 0: stateName = 'IDLE'; break;
+      case 1: stateName = 'FORWARD'; break;
+      case 2: stateName = 'TURN_LEFT'; break;
+      case 3: stateName = 'TURN_RIGHT'; break;
+      case 4: stateName = 'DEAD_END'; break;
+    }
+
+    final latestEvent = state.fsmEvents.isNotEmpty ? state.fsmEvents.last : null;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Row(
+        child: Column(
           children: [
-            Icon(isRunning ? Icons.play_circle : Icons.pause_circle,
-                color: isRunning ? Colors.green : Colors.red, size: 28),
-            const SizedBox(width: 8),
-            Text(isRunning ? 'RUNNING' : 'STOPPED',
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const Spacer(),
-            OutlinedButton(
-              onPressed: state.connected ? () => state.send('STOP') : null,
-              child: const Text('STOP'),
-            ),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: state.connected ? () => state.send('GO') : null,
-              child: const Text('GO'),
+            Row(
+              children: [
+                Icon(isRunning ? Icons.play_circle : Icons.pause_circle,
+                    color: isRunning ? Colors.green : Colors.red, size: 28),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(isRunning ? 'RUNNING ($stateName)' : 'STOPPED ($stateName)',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    if (latestEvent != null)
+                      Text('Reason: ${latestEvent.reason}',
+                          style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                  ],
+                ),
+                const Spacer(),
+                OutlinedButton(
+                  onPressed: state.connected ? () => state.send('STOP') : null,
+                  child: const Text('STOP'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: state.connected ? () => state.send('GO') : null,
+                  child: const Text('GO'),
+                ),
+              ],
             ),
           ],
         ),

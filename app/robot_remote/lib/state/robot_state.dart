@@ -16,6 +16,14 @@ class LogEntry {
   LogEntry(this.tx, this.text) : ts = DateTime.now();
 }
 
+class FsmEvent {
+  final DateTime ts;
+  final String from;
+  final String to;
+  final String reason;
+  FsmEvent(this.from, this.to, this.reason) : ts = DateTime.now();
+}
+
 class RobotState extends ChangeNotifier {
   static const _kHost = 'host';
   static const _kPort = 'port';
@@ -25,6 +33,7 @@ class RobotState extends ChangeNotifier {
 
   final RobotClient _client = RobotClient();
   final Queue<LogEntry> _log = Queue<LogEntry>();
+  final Queue<FsmEvent> _fsmEvents = Queue<FsmEvent>();
   StreamSubscription<String>? _linesSub;
   Timer? _poll;
   bool _pollInflight = false;
@@ -42,6 +51,7 @@ class RobotState extends ChangeNotifier {
 
   bool get connected => _client.connected.value;
   Iterable<LogEntry> get log => _log;
+  Iterable<FsmEvent> get fsmEvents => _fsmEvents;
 
   Future<void> _loadPrefs() async {
     final p = await SharedPreferences.getInstance();
@@ -97,6 +107,7 @@ class RobotState extends ChangeNotifier {
 
   void clearLog() {
     _log.clear();
+    _fsmEvents.clear();
     notifyListeners();
   }
 
@@ -110,6 +121,17 @@ class RobotState extends ChangeNotifier {
 
   void _onLine(String line) {
     _append(LogEntry(false, line));
+
+    if (line.startsWith('EVENT FSM=')) {
+      final reg = RegExp(r'EVENT FSM=(\w+)->(\w+) REASON=(.+)');
+      final match = reg.firstMatch(line);
+      if (match != null) {
+        final ev = FsmEvent(match.group(1)!, match.group(2)!, match.group(3)!);
+        _fsmEvents.addLast(ev);
+        if (_fsmEvents.length > 100) _fsmEvents.removeFirst();
+      }
+    }
+
     telemetry = telemetry.merge(Telemetry.parse(line));
     notifyListeners();
   }

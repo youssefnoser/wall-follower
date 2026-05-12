@@ -44,7 +44,7 @@
 
 /* ---- Wall-to-heading gain -------------------------------------------- */
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.5f
-#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.08f /* s·cm → tune up if sluggish */
+#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.04f /* s·cm → tune up if sluggish */
 
 /* ---- Heading-hold PD ------------------------------------------------- */
 #define HEADING_Kp_DEFAULT 2.0f
@@ -111,6 +111,11 @@ static uint8_t g_turn_count = 0;
 static float g_prev_wall_error = 0.0f;
 static uint32_t g_prev_wall_time = 0;
 
+/* Track regime to catch discontinuities */
+typedef enum { WR_BOTH, WR_RIGHT, WR_LEFT, WR_NONE } WallRegime_t;
+static WallRegime_t g_prev_regime = WR_NONE;
+static float g_wall_error_ema    = 0.0f;  /* filtered derivative */
+
 /* ---- Runtime-tunable copies of compile-time constants ---------------- */
 static float g_ema_alpha = EMA_ALPHA;
 static float g_sensitivity = SENSITIVITY;
@@ -140,6 +145,42 @@ static void turn_log_append(char dir) {
 
 /* FSM */
 static RobotState g_state = STATE_FORWARD;
+
+static void set_state(RobotState new_state, const char *reason) {
+  if (g_state == new_state)
+    return;
+
+  RobotState old_state = g_state;
+  g_state = new_state;
+
+  const char *s_old = "UNKNOWN";
+  const char *s_new = "UNKNOWN";
+
+  switch (old_state) {
+  case STATE_IDLE: s_old = "IDLE"; break;
+  case STATE_FORWARD: s_old = "FORWARD"; break;
+  case STATE_TURN_LEFT: s_old = "TURN_LEFT"; break;
+  case STATE_TURN_RIGHT: s_old = "TURN_RIGHT"; break;
+  case STATE_DEAD_END: s_old = "DEAD_END"; break;
+  }
+
+  switch (new_state) {
+  case STATE_IDLE: s_new = "IDLE"; break;
+  case STATE_FORWARD: s_new = "FORWARD"; break;
+  case STATE_TURN_LEFT: s_new = "TURN_LEFT"; break;
+  case STATE_TURN_RIGHT: s_new = "TURN_RIGHT"; break;
+  case STATE_DEAD_END: s_new = "DEAD_END"; break;
+  }
+
+  printf("[FSM] %s -> %s | Reason: %s\r\n", s_old, s_new, reason);
+
+  if (wifi_link >= 0) {
+    char msg[128];
+    int len = snprintf(msg, sizeof(msg), "EVENT FSM=%s->%s REASON=%s\r\n", s_old,
+                       s_new, reason);
+    Wifi_TcpIp_SendDataTcp((uint8_t)wifi_link, (uint16_t)len, (uint8_t *)msg);
+  }
+}
 
 static void apply_motor(uint8_t motor, int pct) {
   float factor = (motor == MOTOR_LEFT) ? g_left_factor : g_right_factor;
@@ -600,14 +641,14 @@ static void poll_wifi(float *margin, uint8_t *running) {
         } else if (strncmp(payload, "STOP", 4) == 0) {
           *running = 0;
           g_manual_cmd = 0;
-          g_state = STATE_IDLE;
+          set_state(STATE_IDLE, "STOP_CMD");
           alen = snprintf(ack, sizeof(ack), "OK STOPPED\r\n");
 
         } else if (strncmp(payload, "GO", 2) == 0 ||
                    strncmp(payload, "AUTO", 4) == 0) {
           g_mode = 0;
           *running = 1;
-          g_state = STATE_FORWARD;
+          set_state(STATE_FORWARD, "AUTO_CMD");
           alen = snprintf(ack, sizeof(ack), "OK AUTO\r\n");
 
         } else if (strncmp(payload, "FWD", 3) == 0) {
@@ -726,7 +767,7 @@ int main(void) {
      * ============================================================== */
     if (!running) {
       L298N_StopAll(&motor_driver);
-      g_state = STATE_IDLE;
+      set_state(STATE_IDLE, "RUN_FLAG_OFF");
 
     } else if (g_mode == 1) {
       /* ---- MANUAL -------------------------------------------- */
@@ -805,20 +846,36 @@ int main(void) {
                                (float)g_speed_floor * t_combined;
 
         /* ---- PD heading target -------------------------------------------- */
-        uint32_t wall_now = HAL_GetTick();
-        float wall_dt = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
+        WallRegime_t regime = (!left_open && !right_open) ? WR_BOTH :
+                              (!right_open)               ? WR_RIGHT :
+                              (!left_open)                ? WR_LEFT  : WR_NONE;
 
-        /* Suppress derivative on first entry or after a long gap (state re-entry
-           after a turn would produce a giant spike otherwise). */
-        float d_wall_error = 0.0f;
-        if (wall_dt > 0.005f && wall_dt < 0.5f)
-          d_wall_error = (wall_error - g_prev_wall_error) / wall_dt;
+        uint32_t wall_now = HAL_GetTick();
+        float    wall_dt  = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
+        float    d_wall_error = 0.0f;
+
+        bool regime_changed = (regime != g_prev_regime);
+        bool dt_ok          = (wall_dt > 0.005f && wall_dt < 0.3f);
+
+        if (dt_ok && !regime_changed) {
+            float raw_d = (wall_error - g_prev_wall_error) / wall_dt;
+
+            /* clamp before EMA — one spike can't poison the filter */
+            if (raw_d >  15.0f) raw_d =  15.0f;
+            if (raw_d < -15.0f) raw_d = -15.0f;
+
+            /* EMA on the derivative (tu = ~3 ticks ≈ smooth enough) */
+            g_wall_error_ema = 0.35f * raw_d + 0.65f * g_wall_error_ema;
+            d_wall_error = g_wall_error_ema;
+        }
 
         g_prev_wall_error = wall_error;
-        g_prev_wall_time = wall_now;
+        g_prev_wall_time  = wall_now;
+        g_prev_regime     = regime;
 
-        g_target_angle = imu.angle_z - wall_error * g_wall_gain -
-                         d_wall_error * g_wall_gain_d;
+        g_target_angle = imu.angle_z
+                         - wall_error   * g_wall_gain
+                         - d_wall_error * g_wall_gain_d;
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
@@ -846,17 +903,16 @@ int main(void) {
                  g_dist_front, g_filt_left, g_filt_right, should_turn_early);
 
           int8_t dir = choose_turn(g_filt_left, g_filt_right);
+          const char *r = should_turn_early ? "EARLY_OPENING" : "FRONT_BLOCKED";
+
           if (dir > 0) {
-            printf("[FSM] → TURN_LEFT  (L=%.1f)\r\n", g_filt_left);
             turn_log_append('L');
-            g_state = STATE_TURN_LEFT;
+            set_state(STATE_TURN_LEFT, r);
           } else if (dir < 0) {
-            printf("[FSM] → TURN_RIGHT (R=%.1f)\r\n", g_filt_right);
             turn_log_append('R');
-            g_state = STATE_TURN_RIGHT;
+            set_state(STATE_TURN_RIGHT, r);
           } else {
-            printf("[FSM] → DEAD_END\r\n");
-            g_state = STATE_DEAD_END;
+            set_state(STATE_DEAD_END, r);
           }
         }
         break;
@@ -872,8 +928,7 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        g_state = STATE_FORWARD;
-        printf("[FSM] → FORWARD after left turn\r\n");
+        set_state(STATE_FORWARD, "TURN_DONE");
         break;
 
       /* -------------------------------------------------------- */
@@ -886,8 +941,7 @@ int main(void) {
           g_filt_left = fl;
           g_filt_right = fr;
         }
-        g_state = STATE_FORWARD;
-        printf("[FSM] → FORWARD after right turn\r\n");
+        set_state(STATE_FORWARD, "TURN_DONE");
         break;
 
       /* -------------------------------------------------------- */
@@ -907,25 +961,22 @@ int main(void) {
 
         int8_t dir = choose_turn(g_filt_left, g_filt_right);
         if (dir > 0) {
-          printf("[FSM] → TURN_LEFT after backup\r\n");
           turn_log_append('L');
-          g_state = STATE_TURN_LEFT;
+          set_state(STATE_TURN_LEFT, "BACKUP_FIND_LEFT");
         } else if (dir < 0) {
-          printf("[FSM] → TURN_RIGHT after backup\r\n");
           turn_log_append('R');
-          g_state = STATE_TURN_RIGHT;
+          set_state(STATE_TURN_RIGHT, "BACKUP_FIND_RIGHT");
         } else {
-          printf("[FSM] → IDLE (true dead end)\r\n");
           L298N_StopAll(&motor_driver);
           running = 0;
           g_running = 0;
-          g_state = STATE_IDLE;
+          set_state(STATE_IDLE, "BACKUP_DEAD_END");
         }
         break;
       }
 
       default:
-        g_state = STATE_IDLE;
+        set_state(STATE_IDLE, "FSM_ERROR");
         break;
       }
     }
