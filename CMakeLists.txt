@@ -42,15 +42,11 @@ set(HAL_SOURCES
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_cortex.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_rcc.c
-    drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_rcc_ex.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_gpio.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_dma.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_tim.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_tim_ex.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_i2c.c
-    drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_adc.c
-    drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_adc_ex.c
-    drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_pwr.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_flash.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_flash_ex.c
     drivers/STM32F1xx_HAL_Driver/src/stm32f1xx_hal_uart.c

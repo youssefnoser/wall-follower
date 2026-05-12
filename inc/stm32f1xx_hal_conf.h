@@ -34,7 +34,7 @@ extern "C" {
   * @brief This is the list of modules to be used in the HAL driver
   */
 #define HAL_MODULE_ENABLED
-#define HAL_ADC_MODULE_ENABLED
+/* #define HAL_ADC_MODULE_ENABLED */
 /* #define HAL_CAN_MODULE_ENABLED */
 /* #define HAL_CAN_LEGACY_MODULE_ENABLED */
 /* #define HAL_CEC_MODULE_ENABLED */
@@ -55,7 +55,7 @@ extern "C" {
 /* #define HAL_NOR_MODULE_ENABLED */
 /* #define HAL_PCCARD_MODULE_ENABLED */
 /* #define HAL_PCD_MODULE_ENABLED */
-#define HAL_PWR_MODULE_ENABLED
+/* #define HAL_PWR_MODULE_ENABLED */
 #define HAL_RCC_MODULE_ENABLED
 /* #define HAL_RTC_MODULE_ENABLED */
 /* #define HAL_SD_MODULE_ENABLED */
