@@ -12,7 +12,7 @@ void L298N_Init(L298N_t *h_motor)
     GPIO_InitStruct.Pull  = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
 
-    /* IN pins only — EN/PWM pins are owned by TIM_Init */
+    /* IN pins only - EN/PWM pins are owned by TIM_Init */
     GPIO_InitStruct.Pin = h_motor->motor_left.IN1_PIN;
     HAL_GPIO_Init(h_motor->motor_left.IN1_PORT, &GPIO_InitStruct);
     GPIO_InitStruct.Pin = h_motor->motor_left.IN2_PIN;

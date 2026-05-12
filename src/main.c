@@ -24,8 +24,8 @@
 #define FRONT_STOP_CM 20.0f  /* Final stop/dead-end threshold          */
 
 /* Navigation constants */
-#define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
-#define OPEN_WALL_CM 20.0f    /* side dist above this → wall not present */
+#define D_FAR_CM 30.0f        /* side dist > D_FAR -> corridor is open   */
+#define OPEN_WALL_CM 20.0f    /* side dist above this -> wall not present */
 #define DESIRED_WALL_CM 15.0f /* single-wall follow target              */
 /* PD Turn constants */
 #define TURN_Kp 7.0f
@@ -36,7 +36,7 @@
 #define TURN_TIMEOUT_MS 1500
 
 /* Approach zone: when remaining drops below this, we slow down hard */
-#define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15° remaining  */
+#define TURN_APPROACH_DEG 15.0f /* enter slow zone at 15deg remaining  */
 #define TURN_APPROACH_MAX 32    /* PWM ceiling inside slow zone (%)   */
 #define TURN_APPROACH_MIN 28    /* stiction floor inside slow zone    */
 
@@ -44,7 +44,7 @@
 
 /* Gains */
 #define WALL_TO_HEADING_GAIN_DEFAULT 1.95f
-#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.0f /* s·cm → tune up if sluggish */
+#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.0f /* s*cm -> tune up if sluggish */
 
 /* Heading PD */
 #define HEADING_Kp_DEFAULT 2.0f
@@ -82,7 +82,7 @@ typedef enum {
   STATE_FORWARD,    /* corridor-centering + front obstacle check        */
   STATE_TURN_LEFT,  /* executing +90 tank turn                         */
   STATE_TURN_RIGHT, /* executing -90 tank turn                         */
-  STATE_DEAD_END,   /* both sides blocked — back up and retry          */
+  STATE_DEAD_END,   /* both sides blocked - back up and retry          */
 } RobotState;
 
 /* State */
@@ -160,22 +160,22 @@ static void apply_motor(uint8_t motor, int pct) {
   L298N_Move(&motor_driver, motor, dir, speed);
 }
 
-/* move_forward – drive both motors forward at the given percentage. */
+/* move_forward - drive both motors forward at the given percentage. */
 static void move_forward(int pct) {
   apply_motor(MOTOR_LEFT, pct);
   apply_motor(MOTOR_RIGHT, pct);
 }
 
-/* move_backward – drive both motors backward at the given percentage. */
+/* move_backward - drive both motors backward at the given percentage. */
 static void move_backward(int pct) {
   apply_motor(MOTOR_LEFT, -pct);
   apply_motor(MOTOR_RIGHT, -pct);
 }
 
-/* stop_motors – halt both motors immediately. */
+/* stop_motors - halt both motors immediately. */
 static void stop_motors(void) { L298N_StopAll(&motor_driver); }
 
-/* gyro_tick – heading-hold PD inner loop.
+/* gyro_tick - heading-hold PD inner loop.
  * Updates target angle from wall error to drive straight or arc back. */
 static void gyro_tick(void) {
   if (!(g_running && g_mode == 0 && g_state == STATE_FORWARD))
@@ -194,7 +194,7 @@ static void gyro_tick(void) {
   apply_motor(MOTOR_RIGHT, (int)raw_r);
 }
 
-/* sensor_acquire – fire all 3 ultrasonics sequentially. */
+/* sensor_acquire - fire all 3 ultrasonics sequentially. */
 #define US_TIMEOUT_MS 40
 #define GYRO_PERIOD_MS 5
 
@@ -219,7 +219,7 @@ static void sensor_acquire(float *out_front, float *out_left,
   *out_right = HC_SR04_GetDistance(&ultrasonic_right);
 }
 
-/* do_turn – blocking IMU-guided tank turn. */
+/* do_turn - blocking IMU-guided tank turn. */
 static void do_turn(float delta_deg) {
   if (fabsf(delta_deg) < 1.0f) {
     printf("turn: delta too small, skipping\n");
@@ -240,7 +240,7 @@ static void do_turn(float delta_deg) {
     float remaining = target - imu.angle_z;        /* signed error  */
     float rate_z = imu.gyro.z - imu.gyro_z_offset; /* signed deg/s  */
 
-    /* PD output: Positive → CCW (left backward, right forward) */
+    /* PD output: Positive -> CCW (left backward, right forward) */
     float output = g_turn_kp * remaining - g_turn_kd * rate_z;
 
     /* Done when error is small AND the car has stopped rotating */
@@ -259,7 +259,7 @@ static void do_turn(float delta_deg) {
 
     float abs_out = fabsf(output);
 
-    /* Stiction floor — only when output agrees with error direction */
+    /* Stiction floor - only when output agrees with error direction */
     if (abs_out < min_spd) {
       bool pushing_toward = (output > 0.0f && remaining > 0.0f) ||
                             (output < 0.0f && remaining < 0.0f);
@@ -278,8 +278,8 @@ static void do_turn(float delta_deg) {
 
     if (HAL_GetTick() - last_print >= 100) {
       last_print = HAL_GetTick();
-      printf("turn: angle=%+7.2f rem=%+6.2f out=%.1f rate=%.1f\n",
-             imu.angle_z, remaining, output, rate_z);
+      printf("turn: angle=%+7.2f rem=%+6.2f out=%.1f rate=%.1f\n", imu.angle_z,
+             remaining, output, rate_z);
     }
     HAL_Delay(5);
   }
@@ -307,7 +307,7 @@ static void do_turn(float delta_deg) {
          target, error);
 }
 
-/* choose_turn – left-preference turn decision. */
+/* choose_turn - left-preference turn decision. */
 static int8_t choose_turn(float dist_left, float dist_right) {
   if (dist_left > g_d_far_cm)
     return 1;
@@ -690,9 +690,7 @@ int main(void) {
 
     g_running = running;
 
-    /* ================================================================
-     * FSM
-     * ============================================================== */
+    /* FSM */
     if (!running) {
       L298N_StopAll(&motor_driver);
       g_state = STATE_IDLE;
@@ -723,19 +721,17 @@ int main(void) {
       /* AUTO FSM */
       switch (g_state) {
 
-
       case STATE_IDLE:
         L298N_StopAll(&motor_driver);
         break;
 
-
       case STATE_FORWARD: {
         /*
          * Wall-error: single-wall aware.
-         *   Both walls present → center between them.
-         *   One wall missing  → maintain DESIRED_WALL_CM from the
+         *   Both walls present -> center between them.
+         *   One wall missing  -> maintain DESIRED_WALL_CM from the
          *                       visible wall.
-         *   Both missing      → go straight (error = 0).
+         *   Both missing      -> go straight (error = 0).
          */
         float wall_error;
         uint8_t left_open = (g_filt_left > g_open_wall_cm);
@@ -773,9 +769,8 @@ int main(void) {
         float effective_base = (float)g_base_speed * (1.0f - t_combined) +
                                (float)g_speed_floor * t_combined;
 
-
         uint32_t wall_now = HAL_GetTick();
-        float wall_dt = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
+        float wall_dt = (wall_now - g_prev_wall_time) * 0.001f; /* ms -> s */
 
         /* Suppress derivative on first entry or after a long gap (state
            re-entry after a turn would produce a giant spike otherwise). */
@@ -791,7 +786,8 @@ int main(void) {
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
-        printf("fsm: fwd | l:%.1f r:%.1f f:%.1f err:%.1f tgt:%.1f ang:%.1f base:%d\n",
+        printf("fsm: fwd | l:%.1f r:%.1f f:%.1f err:%.1f tgt:%.1f ang:%.1f "
+               "base:%d\n",
                g_filt_left, g_filt_right, g_dist_front, wall_error,
                g_target_angle, imu.angle_z, (int)effective_base);
 
@@ -830,7 +826,6 @@ int main(void) {
         break;
       }
 
-
       case STATE_TURN_LEFT:
         do_turn(+g_turn_angle_deg);
         { /* flush EMA with first real post-turn reading */
@@ -843,7 +838,6 @@ int main(void) {
         g_state = STATE_FORWARD;
         printf("fsm: -> forward after left turn\n");
         break;
-
 
       case STATE_TURN_RIGHT:
         do_turn(-g_turn_angle_deg);
@@ -858,9 +852,8 @@ int main(void) {
         printf("fsm: -> forward after right turn\n");
         break;
 
-
       case STATE_DEAD_END: {
-        printf("fsm: dead end — backing up\n");
+        printf("fsm: dead end - backing up\n");
 
         move_backward((int)((float)g_base_speed * 0.7f));
         HAL_Delay(400);
@@ -1011,7 +1004,7 @@ void TIM_Init(void) {
   gpio.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &gpio);
 
-  /* TIM2 – PWM for motors */
+  /* TIM2 - PWM for motors */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 63;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -1031,7 +1024,7 @@ void TIM_Init(void) {
   motor_driver.motor_right.htim = &htim2;
   motor_driver.motor_right.PWM_Max = 1000;
 
-  /* TIM3 – IC for front + right ultrasonics */
+  /* TIM3 - IC for front + right ultrasonics */
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 63;
   htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -1039,7 +1032,7 @@ void TIM_Init(void) {
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   HAL_TIM_IC_Init(&htim3);
 
-  /* TIM4 – IC for left ultrasonic */
+  /* TIM4 - IC for left ultrasonic */
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 63;
   htim4.Init.CounterMode = TIM_COUNTERMODE_UP;

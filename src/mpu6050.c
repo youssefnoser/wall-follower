@@ -17,10 +17,10 @@ void MPU6050_Init(MPU6050_t *mpu6050) {
   /* Verify communication by reading WHO_AM_I register (0x75) */
   MPU6050_ReadRegister(mpu6050, 0x75, &data);
 
-  // 3. Gyro full scale ±2000 °/s (0x18)
+  // 3. Gyro full scale +2000 deg/s (0x18)
   MPU6050_WriteRegister(mpu6050, MPU6050_GYRO_CONFIG, 0x18);
 
-  // 4. Accel full scale ±2g (0x00)
+  // 4. Accel full scale +2g (0x00)
   MPU6050_WriteRegister(mpu6050, MPU6050_ACCEL_CONFIG, 0x00);
 
   // 5. Sample rate = 1kHz / (1 + 4) = 200 Hz
@@ -79,7 +79,7 @@ void MPU6050_ReadAccelerometer(MPU6050_t *mpu6050) {
   accel_raw_y = (int16_t)((data[2] << 8) | data[3]);
   accel_raw_z = (int16_t)((data[4] << 8) | data[5]);
 
-  /* Convert to g (using ±2g scale) */
+  /* Convert to g (using +2g scale) */
   mpu6050->accel.x = accel_raw_x / ACCEL_SCALE_2G;
   mpu6050->accel.y = accel_raw_y / ACCEL_SCALE_2G;
   mpu6050->accel.z = accel_raw_z / ACCEL_SCALE_2G;
@@ -96,7 +96,7 @@ void MPU6050_ReadGyroscope(MPU6050_t *mpu6050) {
   gyro_raw_y = (int16_t)((data[2] << 8) | data[3]);
   gyro_raw_z = (int16_t)((data[4] << 8) | data[5]);
 
-  /* Convert to deg/s (using ±2000 deg/s scale) */
+  /* Convert to deg/s (using +2000 deg/s scale) */
   mpu6050->gyro.x = gyro_raw_x / GYRO_SCALE_2000;
   mpu6050->gyro.y = gyro_raw_y / GYRO_SCALE_2000;
   mpu6050->gyro.z = gyro_raw_z / GYRO_SCALE_2000;

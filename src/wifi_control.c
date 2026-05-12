@@ -93,7 +93,7 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
       }
       return hdr + (uint16_t)n;
     }
-    return 5; /* malformed +IPD — skip past it */
+    return 5; /* malformed +IPD - skip past it */
   }
 
   /* <id>,CONNECT\r\n  /  <id>,CLOSED\r\n */
@@ -118,7 +118,7 @@ static uint16_t process_one_wifi_event(const char *buf, uint16_t len,
     }
   }
 
-  return 1; /* unrecognised byte — skip it */
+  return 1; /* unrecognised byte - skip it */
 }
 
 static void poll_async_events(L298N_t *motors) {
@@ -156,11 +156,11 @@ void WiFiControl_Init(const char *ssid, const char *password) {
    * The ESP8266 draws up to 300 mA peak during WiFi TX.  If motors are
    * also running, total current can exceed what the battery / regulator
    * can deliver (especially on a low-charge battery), causing a voltage
-   * sag that resets/browns-out the ESP8266 mid-handshake → timeout.
+   * sag that resets/browns-out the ESP8266 mid-handshake -> timeout.
    */
   extern L298N_t motor_driver;
   L298N_StopAll(&motor_driver);
-  printf("wifi: motors stopped – reserving current for ESP8266.\n");
+  printf("wifi: motors stopped - reserving current for ESP8266.\n");
 
   /* Give the ESP8266 plenty of boot time. */
   HAL_Delay(WIFI_BOOT_DELAY_MS);
@@ -220,7 +220,7 @@ void WiFiControl_Init(const char *ssid, const char *password) {
    * Lower the ESP8266 RF TX power after connecting.
    * Default is 82 (max).  Reducing it saves significant current and
    * makes brownouts less likely once the connection is established.
-   * Value 40 ≈ half power — still good range for a car demo.
+   * Value 40 ~ half power - still good range for a car demo.
    */
   Wifi_SetRfPower(40);
 

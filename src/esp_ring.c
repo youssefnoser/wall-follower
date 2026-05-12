@@ -4,7 +4,7 @@
 #define MASK (ESP_RING_SIZE - 1u)
 
 static uint8_t           ring[ESP_RING_SIZE];
-static volatile uint16_t head     = 0;  /* write ptr — ISR side */
+static volatile uint16_t head     = 0;  /* write ptr - ISR side */
 static          uint16_t cmd_tail = 0;  /* AT-command read start */
 static          uint16_t urc_tail = 0;  /* URC / +IPD read start */
 

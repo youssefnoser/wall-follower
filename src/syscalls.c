@@ -53,5 +53,5 @@ void *_sbrk(int incr) {
 
 void _exit(int status) {
     (void)status;
-    while (1); /* spin forever — no OS to return to */
+    while (1); /* spin forever - no OS to return to */
 }
