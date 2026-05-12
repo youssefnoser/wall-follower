@@ -14,14 +14,14 @@
 
 /* ---- Corridor-centering tuning --------------------------------------- */
 #define CENTER_MARGIN_CM 2.0f /* dead-band around wall_error = 0       */
-#define BASE_SPEED 60         /* nominal forward PWM %                  */
+#define BASE_SPEED 75         /* nominal forward PWM %                  */
 #define EMA_ALPHA 0.45f       /* ultrasonic EMA smoothing               */
 #define SENSITIVITY 20.0f     /* wall-error sensitivity (cm)            */
-#define SPEED_FLOOR 35        /* min PWM % while doing wall correction  */
+#define SPEED_FLOOR 45        /* min PWM % while doing wall correction  */
 
 /* ---- Front-obstacle thresholds --------------------------------------- */
-#define FRONT_DECEL_CM 30.0f /* Start slowing down & check for turns   */
-#define FRONT_STOP_CM 15.0f  /* Final stop/dead-end threshold          */
+#define FRONT_DECEL_CM 35.0f /* Start slowing down & check for turns   */
+#define FRONT_STOP_CM 20.0f  /* Final stop/dead-end threshold          */
 
 /* ---- Turn / navigation ----------------------------------------------- */
 #define D_FAR_CM 30.0f        /* side dist > D_FAR → corridor is open   */
@@ -43,8 +43,8 @@
 #define TURN_ANGLE_DEG 90.0f /* rotation target magnitude              */
 
 /* ---- Wall-to-heading gain -------------------------------------------- */
-#define WALL_TO_HEADING_GAIN_DEFAULT 1.5f
-#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.04f /* s·cm → tune up if sluggish */
+#define WALL_TO_HEADING_GAIN_DEFAULT 1.95f
+#define WALL_TO_HEADING_GAIN_D_DEFAULT 0.0f /* s·cm → tune up if sluggish */
 
 /* ---- Heading-hold PD ------------------------------------------------- */
 #define HEADING_Kp_DEFAULT 2.0f
@@ -114,7 +114,7 @@ static uint32_t g_prev_wall_time = 0;
 /* Track regime to catch discontinuities */
 typedef enum { WR_BOTH, WR_RIGHT, WR_LEFT, WR_NONE } WallRegime_t;
 static WallRegime_t g_prev_regime = WR_NONE;
-static float g_wall_error_ema    = 0.0f;  /* filtered derivative */
+static float g_wall_error_ema = 0.0f; /* filtered derivative */
 
 /* ---- Runtime-tunable copies of compile-time constants ---------------- */
 static float g_ema_alpha = EMA_ALPHA;
@@ -157,27 +157,47 @@ static void set_state(RobotState new_state, const char *reason) {
   const char *s_new = "UNKNOWN";
 
   switch (old_state) {
-  case STATE_IDLE: s_old = "IDLE"; break;
-  case STATE_FORWARD: s_old = "FORWARD"; break;
-  case STATE_TURN_LEFT: s_old = "TURN_LEFT"; break;
-  case STATE_TURN_RIGHT: s_old = "TURN_RIGHT"; break;
-  case STATE_DEAD_END: s_old = "DEAD_END"; break;
+  case STATE_IDLE:
+    s_old = "IDLE";
+    break;
+  case STATE_FORWARD:
+    s_old = "FORWARD";
+    break;
+  case STATE_TURN_LEFT:
+    s_old = "TURN_LEFT";
+    break;
+  case STATE_TURN_RIGHT:
+    s_old = "TURN_RIGHT";
+    break;
+  case STATE_DEAD_END:
+    s_old = "DEAD_END";
+    break;
   }
 
   switch (new_state) {
-  case STATE_IDLE: s_new = "IDLE"; break;
-  case STATE_FORWARD: s_new = "FORWARD"; break;
-  case STATE_TURN_LEFT: s_new = "TURN_LEFT"; break;
-  case STATE_TURN_RIGHT: s_new = "TURN_RIGHT"; break;
-  case STATE_DEAD_END: s_new = "DEAD_END"; break;
+  case STATE_IDLE:
+    s_new = "IDLE";
+    break;
+  case STATE_FORWARD:
+    s_new = "FORWARD";
+    break;
+  case STATE_TURN_LEFT:
+    s_new = "TURN_LEFT";
+    break;
+  case STATE_TURN_RIGHT:
+    s_new = "TURN_RIGHT";
+    break;
+  case STATE_DEAD_END:
+    s_new = "DEAD_END";
+    break;
   }
 
   printf("[FSM] %s -> %s | Reason: %s\r\n", s_old, s_new, reason);
 
   if (wifi_link >= 0) {
     char msg[128];
-    int len = snprintf(msg, sizeof(msg), "EVENT FSM=%s->%s REASON=%s\r\n", s_old,
-                       s_new, reason);
+    int len = snprintf(msg, sizeof(msg), "EVENT FSM=%s->%s REASON=%s\r\n",
+                       s_old, s_new, reason);
     Wifi_TcpIp_SendDataTcp((uint8_t)wifi_link, (uint16_t)len, (uint8_t *)msg);
   }
 }
@@ -276,6 +296,14 @@ static void sensor_acquire(float *out_front, float *out_left,
 }
 
 /* -----------------------------------------------------------------------
+ * snap_to_cardinal – round to nearest 90° axis before adding turn delta.
+ * Absorbs any drift/collision offset so turns always land on the grid.
+ * --------------------------------------------------------------------- */
+static float snap_to_cardinal(float angle) {
+  return roundf(angle / 90.0f) * 90.0f;
+}
+
+/* -----------------------------------------------------------------------
  * do_turn – blocking IMU-guided tank turn.
  *
  *   delta_deg > 0 → LEFT  (CCW: left motor backward, right forward)
@@ -292,9 +320,10 @@ static void do_turn(float delta_deg) {
   }
 
   MPU6050_UpdateAngle(&imu);
-  float target = imu.angle_z + delta_deg;
-  printf("[TURN] start=%.1f  target=%.1f  delta=%.1f\r\n", imu.angle_z, target,
-         delta_deg);
+  float snapped = snap_to_cardinal(imu.angle_z);
+  float target = snapped + delta_deg;
+  printf("[TURN] start=%.1f  snapped=%.1f  target=%.1f  delta=%.1f\r\n",
+         imu.angle_z, snapped, target, delta_deg);
 
   uint32_t t_start = HAL_GetTick();
   uint32_t last_print = t_start;
@@ -845,37 +874,40 @@ int main(void) {
         float effective_base = (float)g_base_speed * (1.0f - t_combined) +
                                (float)g_speed_floor * t_combined;
 
-        /* ---- PD heading target -------------------------------------------- */
-        WallRegime_t regime = (!left_open && !right_open) ? WR_BOTH :
-                              (!right_open)               ? WR_RIGHT :
-                              (!left_open)                ? WR_LEFT  : WR_NONE;
+        /* ---- PD heading target --------------------------------------------
+         */
+        WallRegime_t regime = (!left_open && !right_open) ? WR_BOTH
+                              : (!right_open)             ? WR_RIGHT
+                              : (!left_open)              ? WR_LEFT
+                                                          : WR_NONE;
 
         uint32_t wall_now = HAL_GetTick();
-        float    wall_dt  = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
-        float    d_wall_error = 0.0f;
+        float wall_dt = (wall_now - g_prev_wall_time) * 0.001f; /* ms → s */
+        float d_wall_error = 0.0f;
 
         bool regime_changed = (regime != g_prev_regime);
-        bool dt_ok          = (wall_dt > 0.005f && wall_dt < 0.3f);
+        bool dt_ok = (wall_dt > 0.005f && wall_dt < 0.3f);
 
         if (dt_ok && !regime_changed) {
-            float raw_d = (wall_error - g_prev_wall_error) / wall_dt;
+          float raw_d = (wall_error - g_prev_wall_error) / wall_dt;
 
-            /* clamp before EMA — one spike can't poison the filter */
-            if (raw_d >  15.0f) raw_d =  15.0f;
-            if (raw_d < -15.0f) raw_d = -15.0f;
+          /* clamp before EMA — one spike can't poison the filter */
+          if (raw_d > 15.0f)
+            raw_d = 15.0f;
+          if (raw_d < -15.0f)
+            raw_d = -15.0f;
 
-            /* EMA on the derivative (tu = ~3 ticks ≈ smooth enough) */
-            g_wall_error_ema = 0.35f * raw_d + 0.65f * g_wall_error_ema;
-            d_wall_error = g_wall_error_ema;
+          /* EMA on the derivative (tu = ~3 ticks ≈ smooth enough) */
+          g_wall_error_ema = 0.35f * raw_d + 0.65f * g_wall_error_ema;
+          d_wall_error = g_wall_error_ema;
         }
 
         g_prev_wall_error = wall_error;
-        g_prev_wall_time  = wall_now;
-        g_prev_regime     = regime;
+        g_prev_wall_time = wall_now;
+        g_prev_regime = regime;
 
-        g_target_angle = imu.angle_z
-                         - wall_error   * g_wall_gain
-                         - d_wall_error * g_wall_gain_d;
+        g_target_angle = imu.angle_z - wall_error * g_wall_gain -
+                         d_wall_error * g_wall_gain_d;
         g_current_base = effective_base;
 
         /* gyro_tick() applies motors in the next sensor_acquire */
